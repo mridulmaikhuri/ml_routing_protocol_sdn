@@ -11,18 +11,18 @@ def test_connectivity(net):
     for src, dst in [(h1, h2), (h3, h4), (h1, h3), (h2, h4)]:
         result = src.cmd('ping -c 2 ' + dst.IP())
         if '0% packet loss' in result:
-            print('✅ ' + src.name + ' can reach ' + dst.name)
+            print(src.name + ' can reach ' + dst.name)
         else:
-            print('❌ ' + src.name + ' cannot reach ' + dst.name)
+            print(src.name + ' cannot reach ' + dst.name)
 
 def test_routing(net):
     print("\n[TEST] Routing Check")
     h1, h3 = net.get('h1', 'h3')
     result = h1.cmd('ping -c 2 ' + h3.IP())
     if '0% packet loss' in result:
-        print('✅ h1 can reach h3 via routers')
+        print('h1 can reach h3 via routers')
     else:
-        print('❌ h1 cannot reach h3 via routers')
+        print('h1 cannot reach h3 via routers')
 
 def test_latency(net):
     print("\n[TEST] Latency Measurement")
