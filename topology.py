@@ -45,10 +45,10 @@ class MyTopo(Topo):
         self.addLink(h8, s4)
 
         # Connect switch to routers
-        self.addLink(s1, r1, intfName1='r1-eth1', params1={'ip': '10.0.0.3/24'})
-        self.addLink(s2, r2, intfName1='r2-eth1', params1={'ip': '10.0.1.3/24'})
-        self.addLink(s3, r3, intfName1='r3-eth1', params1={'ip': '10.0.2.3/24'})
-        self.addLink(s4, r4, intfName1='r4-eth1', params1={'ip': '10.0.3.3/24'})
+        self.addLink(r1, s1, intfName1='r1-eth1', params1={'ip': '10.0.0.3/24'})
+        self.addLink(r2, s2, intfName1='r2-eth1', params1={'ip': '10.0.1.3/24'})
+        self.addLink(r3, s3, intfName1='r3-eth1', params1={'ip': '10.0.2.3/24'})
+        self.addLink(r4, s4, intfName1='r4-eth1', params1={'ip': '10.0.3.3/24'})
 
         # Connect routers to each other
         self.addLink(r1, r2, intfName1='r1-eth2', params1={'ip': '192.168.2.1/24'}, intfName2='r2-eth2', params2={'ip': '192.168.2.2/24'})
