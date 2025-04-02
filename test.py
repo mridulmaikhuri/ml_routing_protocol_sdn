@@ -31,9 +31,9 @@ class NetworkTester:
         for test in tests:
             try:
                 test()
-                info(f"✅ {test.__name__} passed\n")
+                info(f"{test.__name__} passed\n")
             except AssertionError as e:
-                info(f"❌ {test.__name__} failed: {str(e)}\n")
+                info(f"{test.__name__} failed: {str(e)}\n")
         
         return all(self.results.values())
 
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     try:
         tester.setup()
         success = tester.run_tests()
-        info("\n🔥 Final Test Results:\n")
+        info("\nFinal Test Results:\n")
         for test, result in tester.results.items():
             status = 'PASS' if result else 'FAIL'
             info(f"{test.ljust(20)} {status}\n")
