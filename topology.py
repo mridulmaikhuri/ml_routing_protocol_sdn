@@ -46,24 +46,13 @@ class MyTopo(Topo):
 
         # Connect switch to routers
         self.addLink(s1, r1, intfName1='r1-eth1', params1={'ip': '10.0.0.3/24'})
-        self.addLink(s1, r3, intfName1='r3-eth1', params1={'ip': '10.0.0.4/24'})
-
-        self.addLink(s4, r1, intfName1='r1-eth2', params1={'ip': '10.0.3.3/24'})
-        self.addLink(s4, r2, intfName1='r2-eth1', params1={'ip': '10.0.3.4/24'})
-
-        self.addLink(s3, r2, intfName1='r2-eth2', params1={'ip': '10.0.2.3/24'})
-        self.addLink(s3, r4, intfName1='r4-eth1', params1={'ip': '10.0.2.4/24'})
-
-        self.addLink(s2, r4, intfName1='r4-eth2', params1={'ip': '10.0.1.3/24'})
-        self.addLink(s2, r3, intfName1='r3-eth2', params1={'ip': '10.0.1.4/24'})
+        self.addLink(s2, r2, intfName1='r2-eth1', params1={'ip': '10.0.1.3/24'})
+        self.addLink(s3, r3, intfName1='r4-eth1', params1={'ip': '10.0.2.3/24'})
+        self.addLink(s4, r4, intfName1='r3-eth1', params1={'ip': '10.0.3.3/24'})
 
         # Connect routers to each other
-        self.addLink(r1, r2, intfName1='r1-eth3', params1={'ip': '192.168.2.1/30'}, intfName2='r2-eth3', params2={'ip': '192.168.2.2/30'})
-        self.addLink(r3, r4, intfName1='r3-eth3', params1={'ip': '192.168.3.1/30'}, intfName2='r4-eth3', params2={'ip': '192.168.3.2/30'})
-        self.addLink(r1, r3, intfName1='r1-eth4', params1={'ip': '192.168.4.1/30'}, intfName2='r3-eth4', params2={'ip': '192.168.4.2/30'})
-        self.addLink(r2, r4, intfName1='r2-eth4', params1={'ip': '192.168.5.1/30'}, intfName2='r4-eth4', params2={'ip': '192.168.5.2/30'})
-        self.addLink(r1, r4, intfName1='r1-eth5', params1={'ip': '192.168.6.1/30'}, intfName2='r4-eth5', params2={'ip': '192.168.6.2/30'})
-        self.addLink(r2, r3, intfName1='r2-eth5', params1={'ip': '192.168.7.1/30'}, intfName2='r3-eth5', params2={'ip': '192.168.7.2/30'})
+        self.addLink(r1, r2, intfName1='r1-eth2', params1={'ip': '192.168.2.1/24'}, intfName2='r2-eth2', params2={'ip': '192.168.2.2/24'})
+        self.addLink(r3, r4, intfName1='r3-eth2', params1={'ip': '192.168.3.1/24'}, intfName2='r4-eth2', params2={'ip': '192.168.3.2/24'})
 
 
 def run():
@@ -80,20 +69,10 @@ def run():
         r.cmd('sysctl -w net.ipv4.ip_forward=1')
 
     # add static routes to routers
-    r1.cmd('ip route add 10.0.1.0/24 via 192.168.6.2')  # via r1<->r4 link
-    r1.cmd('ip route add 10.0.2.0/24 via 192.168.2.2')  # via r1<->r2 link
-
-    # r2: Directly connected to 10.0.2.0/24 & 10.0.3.0/24
-    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1')  # via r2<->r1 link
-    r2.cmd('ip route add 10.0.1.0/24 via 192.168.5.2')  # via r2<->r4 link
-
-    # r3: Directly connected to 10.0.0.0/24 & 10.0.1.0/24
-    r3.cmd('ip route add 10.0.2.0/24 via 192.168.7.1')  # via r3<->r2 link
-    r3.cmd('ip route add 10.0.3.0/24 via 192.168.4.1')  # via r3<->r1 link
-
-    # r4: Directly connected to 10.0.1.0/24 & 10.0.2.0/24
-    r4.cmd('ip route add 10.0.0.0/24 via 192.168.6.1')  # via r4<->r1 link
-    r4.cmd('ip route add 10.0.3.0/24 via 192.168.6.1')  # via r4<->r1 link
+    r1.cmd('ip route add 10.0.1.0/24 via 192.168.2.2/24')
+    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1/24')
+    r3.cmd('ip route add 10.0.3.0/24 via 192.168.3.2/24')
+    r4.cmd('ip route add 10.0.2.0/24 via 192.168.3.1/24')  
     
     CLI(net)
     net.stop()
