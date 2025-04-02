@@ -3,7 +3,7 @@ from mininet.node import Node, Controller
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 import time
-from topology import MyTopo 
+from topology import MyTopo  
 
 def run_tests(net):
     """Run network tests after starting the topology."""
@@ -19,39 +19,39 @@ def run_tests(net):
     for src in hosts:
         for dst in hosts:
             if src != dst:
-                result = src.cmd(f'ping -c 3 {dst.IP()}')
+                result = src.cmd('ping -c 3 ' + dst.IP())
                 if "0% packet loss" in result:
-                    info(f"[PASS] {src.name} can reach {dst.name}\n")
+                    info("[PASS] " + src.name + " can reach " + dst.name + "\n")
                 else:
-                    info(f"[FAIL] {src.name} cannot reach {dst.name}\n")
+                    info("[FAIL] " + src.name + " cannot reach " + dst.name + "\n")
 
     # === 2. Check Routing Tables on Routers ===
     info("\n*** Checking Router Routing Tables ***\n")
     r1_routes = r1.cmd('ip route')
     r2_routes = r2.cmd('ip route')
-    info(f"Routing Table of r1:\n{r1_routes}\n")
-    info(f"Routing Table of r2:\n{r2_routes}\n")
+    info("Routing Table of r1:\n" + r1_routes + "\n")
+    info("Routing Table of r2:\n" + r2_routes + "\n")
 
     # === 3. Latency Check (Ping with timing) ===
     info("\n*** Measuring Network Latency ***\n")
-    latency = h1.cmd(f'ping -c 5 {h3.IP()}')
-    info(f"Latency Test from h1 to h3:\n{latency}\n")
+    latency = h1.cmd('ping -c 5 ' + h3.IP())
+    info("Latency Test from h1 to h3:\n" + latency + "\n")
 
     # === 4. Bandwidth Test using iperf ===
     info("\n*** Measuring Network Bandwidth ***\n")
     h3.cmd('iperf -s -D')  # Start iperf server on h3 in daemon mode
     time.sleep(1)  # Give server time to start
-    bandwidth = h1.cmd(f'iperf -c {h3.IP()} -t 5')
-    info(f"Bandwidth Test from h1 to h3:\n{bandwidth}\n")
+    bandwidth = h1.cmd('iperf -c ' + h3.IP() + ' -t 5')
+    info("Bandwidth Test from h1 to h3:\n" + bandwidth + "\n")
 
     # === 5. Check if IP Forwarding is Enabled on Routers ===
     info("\n*** Checking IP Forwarding on Routers ***\n")
     for router in [r1, r2]:
         ip_forward_status = router.cmd("cat /proc/sys/net/ipv4/ip_forward").strip()
         if ip_forward_status == "1":
-            info(f"[PASS] IP forwarding is enabled on {router.name}\n")
+            info("[PASS] IP forwarding is enabled on " + router.name + "\n")
         else:
-            info(f"[FAIL] IP forwarding is NOT enabled on {router.name}\n")
+            info("[FAIL] IP forwarding is NOT enabled on " + router.name + "\n")
 
     info("\n*** Network Tests Completed ***\n")
 
