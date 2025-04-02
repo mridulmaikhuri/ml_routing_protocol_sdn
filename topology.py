@@ -68,6 +68,11 @@ def run():
     for r in [r1, r2, r3, r4]:
         r.cmd('sysctl -w net.ipv4.ip_forward=1')
 
+    r1.setIP('10.0.0.3/24', intf='r1-eth1')
+    r2.setIP('10.0.1.3/24', intf='r2-eth1')
+    r3.setIP('10.0.2.3/24', intf='r3-eth1')
+    r4.setIP('10.0.3.3/24', intf='r4-eth1')
+
     # add static routes to routers
     r1.cmd('ip route add 10.0.1.0/24 via 192.168.2.2')
     r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1')
