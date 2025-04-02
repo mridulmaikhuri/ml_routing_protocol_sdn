@@ -80,24 +80,20 @@ def run():
         r.cmd('sysctl -w net.ipv4.ip_forward=1')
 
     # add static routes to routers
-    r1.cmd('ip route add 10.0.1.0/24 via 192.168.4.2')  # Reach h3, h4 via r3
-    r1.cmd('ip route add 10.0.2.0/24 via 192.168.6.2')  # Reach h5, h6 via r4
-    r1.cmd('ip route add 10.0.3.0/24 via 10.0.3.4')  # Directly connected via eth2
-    r1.cmd('ip route add 192.168.5.0/30 via 192.168.2.2')  # Reach r2 via r1-r2 link
-    r1.cmd('ip route add 10.0.2.0/24 via 192.168.2.2')  # Reach h5, h6 via r2
-    r1.cmd('ip route add 10.0.1.0/24 via 192.168.2.2')  # Reach h3, h4 via r2-r4
+    r1.cmd('ip route add 10.0.1.0/24 via 192.168.6.2')  # via r1<->r4 link
+    r1.cmd('ip route add 10.0.2.0/24 via 192.168.2.2')  # via r1<->r2 link
 
-    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1')  # Reach h1, h2 via r1
-    r2.cmd('ip route add 10.0.1.0/24 via 192.168.5.2')  # Reach h3, h4 via r4
-    r2.cmd('ip route add 10.0.3.0/24 via 10.0.3.3')  # Directly connected
+    # r2: Directly connected to 10.0.2.0/24 & 10.0.3.0/24
+    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1')  # via r2<->r1 link
+    r2.cmd('ip route add 10.0.1.0/24 via 192.168.5.2')  # via r2<->r4 link
 
-    r3.cmd('ip route add 10.0.0.0/24 via 192.168.4.1')  # Reach h1, h2 via r1
-    r3.cmd('ip route add 10.0.2.0/24 via 192.168.3.2')  # Reach h5, h6 via r4
-    r3.cmd('ip route add 10.0.3.0/24 via 192.168.4.1')  # Via r1
+    # r3: Directly connected to 10.0.0.0/24 & 10.0.1.0/24
+    r3.cmd('ip route add 10.0.2.0/24 via 192.168.7.1')  # via r3<->r2 link
+    r3.cmd('ip route add 10.0.3.0/24 via 192.168.4.1')  # via r3<->r1 link
 
-    r4.cmd('ip route add 10.0.0.0/24 via 192.168.6.1')  # Reach h1, h2 via r1
-    r4.cmd('ip route add 10.0.3.0/24 via 192.168.5.1')  # Reach h7, h8 via r2
-    r4.cmd('ip route add 10.0.0.0/24 via 192.168.3.1')  # Reach via r3
+    # r4: Directly connected to 10.0.1.0/24 & 10.0.2.0/24
+    r4.cmd('ip route add 10.0.0.0/24 via 192.168.6.1')  # via r4<->r1 link
+    r4.cmd('ip route add 10.0.3.0/24 via 192.168.6.1')  # via r4<->r1 link
     
     CLI(net)
     net.stop()
