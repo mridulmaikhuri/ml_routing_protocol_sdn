@@ -12,8 +12,8 @@ class NetworkTester:
         self.results = {}
         
     def setup(self):
-        info("*** Starting network\n")
         self.net.start()
+        info("*** Starting network")
         configure_network(self.net)
         # Add minor delay for convergence
         time.sleep(1)  
@@ -31,9 +31,9 @@ class NetworkTester:
         for test in tests:
             try:
                 test()
-                info(f"{test.__name__} passed\n")
+                info(f"{test.__name__} passed")
             except AssertionError as e:
-                info(f"{test.__name__} failed: {str(e)}\n")
+                info(f"{test.__name__} failed: {str(e)}")
         
         return all(self.results.values())
 
@@ -135,7 +135,7 @@ class NetworkTester:
         self.results['failure_resilience'] = True
 
     def cleanup(self):
-        info("*** Stopping network\n")
+        info("*** Stopping network")
         self.net.stop()
 
 if __name__ == '__main__':
@@ -144,10 +144,10 @@ if __name__ == '__main__':
     try:
         tester.setup()
         success = tester.run_tests()
-        info("\nFinal Test Results:\n")
+        info("Final Test Results:")
         for test, result in tester.results.items():
             status = 'PASS' if result else 'FAIL'
-            info(f"{test.ljust(20)} {status}\n")
+            info(f"{test.ljust(20)} {status}")
         exit(0 if success else 1)
     finally:
         tester.cleanup()
