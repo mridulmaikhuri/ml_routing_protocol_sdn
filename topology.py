@@ -21,3 +21,5 @@ class topology(Topo):
         self.addLink(s2, h2)
         self.addLink(s3, h3)
         self.addLink(s3, h4)
+
+topos = {'myTopo': topology}
