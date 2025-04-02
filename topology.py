@@ -47,8 +47,8 @@ class MyTopo(Topo):
         # Connect switch to routers
         self.addLink(s1, r1, intfName1='r1-eth1', params1={'ip': '10.0.0.3/24'})
         self.addLink(s2, r2, intfName1='r2-eth1', params1={'ip': '10.0.1.3/24'})
-        self.addLink(s3, r3, intfName1='r4-eth1', params1={'ip': '10.0.2.3/24'})
-        self.addLink(s4, r4, intfName1='r3-eth1', params1={'ip': '10.0.3.3/24'})
+        self.addLink(s3, r3, intfName1='r3-eth1', params1={'ip': '10.0.2.3/24'})
+        self.addLink(s4, r4, intfName1='r4-eth1', params1={'ip': '10.0.3.3/24'})
 
         # Connect routers to each other
         self.addLink(r1, r2, intfName1='r1-eth2', params1={'ip': '192.168.2.1/24'}, intfName2='r2-eth2', params2={'ip': '192.168.2.2/24'})
@@ -69,10 +69,10 @@ def run():
         r.cmd('sysctl -w net.ipv4.ip_forward=1')
 
     # add static routes to routers
-    r1.cmd('ip route add 10.0.1.0/24 via 192.168.2.2/24')
-    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1/24')
-    r3.cmd('ip route add 10.0.3.0/24 via 192.168.3.2/24')
-    r4.cmd('ip route add 10.0.2.0/24 via 192.168.3.1/24')  
+    r1.cmd('ip route add 10.0.1.0/24 via 192.168.2.2')
+    r2.cmd('ip route add 10.0.0.0/24 via 192.168.2.1')
+    r3.cmd('ip route add 10.0.3.0/24 via 192.168.3.2')
+    r4.cmd('ip route add 10.0.2.0/24 via 192.168.3.1')  
     
     CLI(net)
     net.stop()
