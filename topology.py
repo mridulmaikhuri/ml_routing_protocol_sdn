@@ -7,10 +7,10 @@ from mininet.log import setLogLevel
 class MyTopo(Topo):
     def build(self):
         # Create routers
-        r1 = self.addNode('r1', cls=Node, ip='192.168.1.1/24')
-        r2 = self.addNode('r2', cls=Node, ip='192.168.1.2/24')
-        r3 = self.addNode('r3', cls=Node, ip='192.168.1.3/24')
-        r4 = self.addNode('r4', cls=Node, ip='192.168.1.4/24')
+        r1 = self.addNode('r1', cls=Node)
+        r2 = self.addNode('r2', cls=Node)
+        r3 = self.addNode('r3', cls=Node)
+        r4 = self.addNode('r4', cls=Node)
 
         # Create switch
         s1 = self.addSwitch('s1')
