@@ -1,7 +1,7 @@
 from mininet.net import Mininet
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
-from complex_topology import ComplexTopology
+from topology import ComplexTopology
 import time
 
 def run_tests():
