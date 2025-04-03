@@ -4,6 +4,7 @@ from mininet.node import OVSController
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
+import time
 
 class ComplexLoopTopo(Topo):
     """
@@ -78,6 +79,7 @@ class ComplexLoopTopo(Topo):
         self.addLink(s4, s10)
         
         # Add some links with different bandwidths and delays to test QoS
+        # Use more moderate delay values
         self.addLink(s2, s9, cls=TCLink, bw=10, delay='5ms')
         self.addLink(s3, s6, cls=TCLink, bw=5, delay='10ms')
         self.addLink(s4, s7, cls=TCLink, bw=7, delay='15ms')
@@ -91,8 +93,25 @@ def createTopology():
     net.start()
     
     # Enable STP on all switches to handle loops
+    info('*** Enabling STP on all switches\n')
     for switch in net.switches:
+        info('*** Enabling STP on ' + switch.name + '\n')
         switch.cmd('ovs-vsctl set bridge ' + switch.name + ' stp_enable=true')
+    
+    # Install necessary tools on all hosts
+    info('*** Installing necessary tools on all hosts\n')
+    for host in net.hosts:
+        host.cmd("apt-get update -qq && apt-get install -y iperf traceroute -qq > /dev/null 2>&1 || true")
+    
+    # Wait for STP to converge
+    info('*** Waiting for STP to converge (30 seconds)...\n')
+    time.sleep(30)
+    
+    # Print STP status for debugging
+    info('*** STP status:\n')
+    for switch in net.switches:
+        info(switch.name + ' STP status: ' + switch.cmd('ovs-vsctl get bridge ' + switch.name + ' stp_enable').strip() + '\n')
+        info(switch.name + ' port status:\n' + switch.cmd('ovs-ofctl show ' + switch.name) + '\n')
     
     info('*** Running CLI\n')
     CLI(net)
