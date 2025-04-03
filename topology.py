@@ -1,65 +1,91 @@
-from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import Controller, OVSSwitch
+from mininet.node import Controller, RemoteController, OVSController
+from mininet.node import CPULimitedHost, Host, Node
+from mininet.node import OVSKernelSwitch, UserSwitch
+from mininet.node import IVSSwitch
 from mininet.cli import CLI
-from mininet.log import setLogLevel
+from mininet.log import setLogLevel, info
+from mininet.link import TCLink, Intf
+from subprocess import call
 
-class ComplexTopology(Topo):
-    def build(self):
-        # Create switches (8 switches in a complex structure)
-        s1 = self.addSwitch('s1', stp=True, prio=1)
-        s2 = self.addSwitch('s2', stp=True, prio=2)
-        s3 = self.addSwitch('s3', stp=True, prio=3)
-        s4 = self.addSwitch('s4', stp=True, prio=4)
-        s5 = self.addSwitch('s5', stp=True, prio=5)
-        s6 = self.addSwitch('s6', stp=True, prio=6)
-        s7 = self.addSwitch('s7', stp=True, prio=7)
-        s8 = self.addSwitch('s8', stp=True, prio=8)
-
-        # Create hosts (6 hosts)
-        h1 = self.addHost('h1')
-        h2 = self.addHost('h2')
-        h3 = self.addHost('h3')
-        h4 = self.addHost('h4')
-        h5 = self.addHost('h5')
-        h6 = self.addHost('h6')
-
-        # Add links between switches (creating loops and redundant paths)
-        self.addLink(s1, s2, bw=10, delay='5ms')
-        self.addLink(s1, s3, bw=10, delay='5ms')
-        self.addLink(s1, s4, bw=10, delay='5ms')
-        self.addLink(s2, s3, bw=10, delay='5ms')  # Loop
-        self.addLink(s2, s5, bw=10, delay='5ms')
-        self.addLink(s3, s6, bw=10, delay='5ms')
-        self.addLink(s4, s5, bw=10, delay='5ms')
-        self.addLink(s4, s7, bw=10, delay='5ms')
-        self.addLink(s5, s6, bw=10, delay='5ms')  # Loop
-        self.addLink(s5, s8, bw=10, delay='5ms')
-        self.addLink(s6, s8, bw=10, delay='5ms')
-        self.addLink(s7, s8, bw=10, delay='5ms')  # Loop
-
-        # Connect hosts to switches
-        self.addLink(h1, s1, bw=100, delay='1ms')
-        self.addLink(h2, s2, bw=100, delay='1ms')
-        self.addLink(h3, s3, bw=100, delay='1ms')
-        self.addLink(h4, s5, bw=100, delay='1ms')
-        self.addLink(h5, s7, bw=100, delay='1ms')
-        self.addLink(h6, s8, bw=100, delay='1ms')
-
-def setup_network():
-    topo = ComplexTopology()
-    net = Mininet(topo=topo, controller=Controller, switch=OVSSwitch)
-    net.start()
+def meshNetworkWithRouters():
+    # Initialize Mininet
+    net = Mininet(topo=None, build=False, ipBase='10.0.0.0/8')
     
-    # Wait for STP to converge (takes about 30-40 seconds)
-    print("Waiting for STP to converge...")
-    import time
-    time.sleep(40)
+    # Add controller
+    info('*** Adding controller\n')
+    c0 = net.addController(name='c0', controller=Controller, protocol='tcp', port=6633)
     
-    return net
+    # Number of routers for the mesh
+    num_routers = 5
+    routers = []
+    
+    # Add routers
+    info('*** Adding routers\n')
+    for i in range(num_routers):
+        router_name = 'r{0}'.format(i+1)
+        router = net.addHost(router_name, cls=Node, ip='10.0.{0}.1/24'.format(i+1))
+        router.cmd('sysctl -w net.ipv4.ip_forward=1')  # Enable IP forwarding
+        routers.append(router)
+    
+    # Add hosts (one per router)
+    info('*** Adding hosts\n')
+    hosts = []
+    for i in range(num_routers):
+        host_name = 'h{0}'.format(i+1)
+        host = net.addHost(host_name, cls=Host, 
+                         ip='10.0.{0}.100/24'.format(i+1), 
+                         defaultRoute='via 10.0.{0}.1'.format(i+1))
+        hosts.append(host)
+    
+    # Connect hosts to their respective routers
+    info('*** Creating links between hosts and routers\n')
+    for i in range(num_routers):
+        net.addLink(hosts[i], routers[i], 
+                   intfName2='r{0}-eth0'.format(i+1), 
+                   params2={'ip': '10.0.{0}.1/24'.format(i+1)})
+    
+    # Create mesh topology by connecting all routers to each other
+    info('*** Creating mesh links between routers\n')
+    link_count = 0
+    for i in range(num_routers):
+        for j in range(i+1, num_routers):
+            link_count += 1
+            # Create subnet for each router-router link
+            subnet = 10 + link_count  # Start from subnet 10.0.11.0/24 and increment
+            
+            # Add link between routers
+            intfName1 = 'r{0}-eth{1}'.format(i+1, j+1)
+            intfName2 = 'r{0}-eth{1}'.format(j+1, i+1)
+            
+            net.addLink(
+                routers[i], 
+                routers[j],
+                intfName1=intfName1, 
+                intfName2=intfName2,
+                params1={'ip': '10.0.{0}.{1}/24'.format(subnet, i+1)},
+                params2={'ip': '10.0.{0}.{1}/24'.format(subnet, j+1)}
+            )
+            
+            # Add routes
+            routers[i].cmd('ip route add 10.0.{0}.0/24 via 10.0.{1}.{2}'.format(j+1, subnet, j+1))
+            routers[j].cmd('ip route add 10.0.{0}.0/24 via 10.0.{1}.{2}'.format(i+1, subnet, i+1))
+    
+    # Start network
+    info('*** Starting network\n')
+    net.build()
+    
+    # Start controller
+    c0.start()
+    
+    # Run CLI
+    info('*** Running CLI\n')
+    CLI(net)
+    
+    # Stop network
+    info('*** Stopping network\n')
+    net.stop()
 
 if __name__ == '__main__':
     setLogLevel('info')
-    net = setup_network()
-    CLI(net)
-    net.stop()
+    meshNetworkWithRouters()
