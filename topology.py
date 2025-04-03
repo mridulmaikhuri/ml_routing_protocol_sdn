@@ -7,14 +7,14 @@ from mininet.log import setLogLevel
 class ComplexTopology(Topo):
     def build(self):
         # Create switches (8 switches in a complex structure)
-        s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-        s3 = self.addSwitch('s3')
-        s4 = self.addSwitch('s4')
-        s5 = self.addSwitch('s5')
-        s6 = self.addSwitch('s6')
-        s7 = self.addSwitch('s7')
-        s8 = self.addSwitch('s8')
+        s1 = self.addSwitch('s1', stp=True, prio=1)
+        s2 = self.addSwitch('s2', stp=True, prio=2)
+        s3 = self.addSwitch('s3', stp=True, prio=3)
+        s4 = self.addSwitch('s4', stp=True, prio=4)
+        s5 = self.addSwitch('s5', stp=True, prio=5)
+        s6 = self.addSwitch('s6', stp=True, prio=6)
+        s7 = self.addSwitch('s7', stp=True, prio=7)
+        s8 = self.addSwitch('s8', stp=True, prio=8)
 
         # Create hosts (6 hosts)
         h1 = self.addHost('h1')
@@ -50,6 +50,12 @@ def setup_network():
     topo = ComplexTopology()
     net = Mininet(topo=topo, controller=Controller, switch=OVSSwitch)
     net.start()
+    
+    # Wait for STP to converge (takes about 30-40 seconds)
+    print("Waiting for STP to converge...")
+    import time
+    time.sleep(40)
+    
     return net
 
 if __name__ == '__main__':
