@@ -5,7 +5,7 @@ from topology import topology
 import traceback
 
 def test_connectivity(net):
-    info("*** Testing connectivity between all hosts\n")
+    print("\n*** Testing connectivity between all hosts\n")
     host_names = ['h{0}'.format(i + 1) for i in range(10)]
     hosts = [net.get(h) for h in host_names]
     total_tests = 0
@@ -17,24 +17,24 @@ def test_connectivity(net):
                 total_tests += 1
                 ping_result = source.cmd('ping -c 2 -W 1 {0}'.format(dest.IP()))
                 if '0% packet loss' in ping_result:
-                    print("PASS: {0} -> {1} ({2}): SUCCESS\n".format(source.name, dest.name, dest.IP()))
+                    print("PASS: {0} -> {1} ({2}): SUCCESS".format(source.name, dest.name, dest.IP()))
                     successful_tests += 1
                 else:
-                    print("FAIL: {0} -> {1} ({2}): FAILED\n".format(source.name, dest.name, dest.IP()))
+                    print("FAIL: {0} -> {1} ({2}): FAILED".format(source.name, dest.name, dest.IP()))
     
     success_rate = (successful_tests / total_tests) * 100 if total_tests > 0 else 0
-    print("*** Connectivity tests completed: {0}/{1} successful ({2:.1f}%)\n".format(successful_tests, total_tests, success_rate))
+    print("*** Connectivity tests completed: {0}/{1} successful ({2:.1f}%)".format(successful_tests, total_tests, success_rate))
 
 def test_bandwidth(net):
-    print("*** Testing bandwidth between selected hosts\n")
+    print("\n*** Testing bandwidth between selected hosts\n")
 
     h1, h5 = net.get('h1', 'h5')  
     
-    print("*** Starting iperf server on {0}\n".format(h5.name))
+    print("*** Starting iperf server on {0}".format(h5.name))
     h5.cmd('iperf -s &')  
     time.sleep(1)  
     
-    print("*** Running bandwidth test from {0} to {1}\n".format(h1.name, h5.name))
+    print("*** Running bandwidth test from {0} to {1}".format(h1.name, h5.name))
     iperf_result = h1.cmd('iperf -c {0} -t 5'.format(h5.IP()))
     print("*** Bandwidth test results:\n{0}\n".format(iperf_result))
     
@@ -42,19 +42,21 @@ def test_bandwidth(net):
     
     bandwidth = "Unknown"
     for line in iperf_result.split('\n'):
-        if 'Mbits/sec' in line and 'sender' in line:
+        if 'Mbits/sec' in line:
             bandwidth = line.split('Mbits/sec')[0].split()[-1] + " Mbits/sec"
+            break
+        elif 'Gbits/sec' in line:
+            bandwidth = line.split('Gbits/sec')[0].split()[-1] + " Gbits/sec"
     
-    print("*** Bandwidth between {0} and {1}: {2}\n".format(h1.name, h5.name, bandwidth))
+    print("*** Bandwidth between {0} and {1}: {2}".format(h1.name, h5.name, bandwidth))
 
 def test_latency(net):
-    print("*** Testing latency between all routers\n")
+    print("\n*** Testing latency between all routers\n")
     routers = [h for h in net.hosts if h.name.startswith('r')]
     
     for source in routers:
         for dest in routers:
             if source != dest:
-                print("*** Measuring latency from {0} to {1}\n".format(source.name, dest.name))
                 ping_result = source.cmd('ping -c 5 {0}'.format(dest.IP()))
                 
                 avg_latency = "Unknown"
@@ -62,24 +64,24 @@ def test_latency(net):
                     if 'min/avg/max' in line:
                         avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
                 
-                print("*** Latency {0} -> {1}: {2}\n".format(source.name, dest.name, avg_latency))
+                print("*** Latency {0} -> {1}: {2}".format(source.name, dest.name, avg_latency))
 
 def check_routing_tables(net):
-    print("*** Checking routing tables on all routers\n")
+    print("\n*** Checking routing tables on all routers\n")
     routers = [h for h in net.hosts if h.name.startswith('r')]
     
     for router in routers:
         all_correct = True
-        print("*** Checking routing table for {0}:\n".format(router.name))
+        print("*** Checking routing table for {0}:".format(router.name))
         routes = router.cmd('ip route')
         
         for i in range(1, 6):  
             subnet = "10.0.{0}.0/24".format(i)
             if subnet not in routes and not router.name == 'r{0}'.format(i):
-                print("FAIL: Missing route to {0} in {1}\n".format(subnet, router.name))
+                print(" FAIL: Missing route to {0} in {1}".format(subnet, router.name))
                 all_correct = False
-        if not all_correct:
-            print("PASS: All required routes are present in routing table")
+        if all_correct:
+            print(" PASS: All required routes are present in routing table\n")
 
 def test_path_tracing(net):
     print("*** Tracing paths between hosts in different subnets\n")
@@ -88,7 +90,7 @@ def test_path_tracing(net):
     
     print("*** Tracing path from {0} to {1}\n".format(h1.name, h7.name))
     traceroute = h1.cmd('traceroute -n {0}'.format(h7.IP()))
-    print("{0}\n".format(traceroute))
+    print("{0}".format(traceroute))
 
 def run_all_tests():
     try:
@@ -103,7 +105,7 @@ def run_all_tests():
         dumpNodeConnections(net.hosts)
         
         # Run tests
-        print('\n*** STARTING NETWORK TESTS ***\n\n')
+        print('\n*** STARTING NETWORK TESTS ***\n')
         
         test_connectivity(net)
         test_bandwidth(net)
