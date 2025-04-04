@@ -89,14 +89,10 @@ def topology():
     for switch in switches:
         switch.start([c0])
 
-    # Run CLI
-    print('*** Running CLI')
-    CLI(net)
-
-    # Stop network
-    print('*** Stopping network')
-    net.stop()
+    return net
 
 if __name__ == '__main__':
     setLogLevel('info')  
-    topology()
+    net = topology()
+    CLI(net)
+    net.stop()
