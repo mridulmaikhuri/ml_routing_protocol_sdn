@@ -1,8 +1,7 @@
 from mininet.net import Mininet
-from mininet.cli import CLI
 from mininet.log import setLogLevel
 import time
-from topology import topology  # Importing your topology
+from topology import topology 
 
 def test_connectivity(net):
     print("\n[TEST] Basic Connectivity Check")
@@ -12,9 +11,9 @@ def test_connectivity(net):
             dst = net.get('h' + str(h_target))
             result = src.cmd('ping -c 2 ' + dst.IP())
             if '0% packet loss' in result:
-                print(src.name + ' can reach ' + dst.name + ' ✅')
+                print(src.name + ' can reach ' + dst.name)
             else:
-                print(src.name + ' cannot reach ' + dst.name + ' ❌')
+                print(src.name + ' cannot reach ' + dst.name)
 
 def test_routing(net):
     print("\n[TEST] Routing Check")
@@ -47,7 +46,7 @@ def run_tests(net):
 def main():
     setLogLevel('info')
     net = Mininet()
-    topology()  # Call your topology function
+    topology()  
     run_tests(net)
     net.stop()
 
