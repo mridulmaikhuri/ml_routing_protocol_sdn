@@ -1,58 +1,64 @@
 from mininet.net import Mininet
-from mininet.node import Controller, RemoteController, OVSController
-from mininet.node import CPULimitedHost, Host, Node
-from mininet.node import OVSKernelSwitch, UserSwitch
-from mininet.node import IVSSwitch
+from mininet.node import Controller
+from mininet.node import Host, Node
+from mininet.node import OVSKernelSwitch
 from mininet.cli import CLI
-from mininet.log import setLogLevel, info
-from mininet.link import TCLink, Intf
-from subprocess import call
+from mininet.log import setLogLevel
 
-def meshNetworkWithRouters():
+def topology():
     # Initialize Mininet
     net = Mininet(topo=None, build=False, ipBase='10.0.0.0/8')
     
     # Add controller
-    info('*** Adding controller\n')
+    print('*** Adding controller')
     c0 = net.addController(name='c0', controller=Controller, protocol='tcp', port=6633)
     
-    # Number of routers for the mesh
-    num_routers = 5
-    routers = []
+    # Define number of routers and switches
+    num = 5
     
     # Add routers
-    info('*** Adding routers\n')
-    for i in range(num_routers):
+    routers = []
+    print('*** Adding routers')
+    for i in range(num):
         router_name = 'r{0}'.format(i+1)
         router = net.addHost(router_name, cls=Node, ip='10.0.{0}.1/24'.format(i+1))
-        router.cmd('sysctl -w net.ipv4.ip_forward=1')  # Enable IP forwarding
+        router.cmd('sysctl -w net.ipv4.ip_forward=1')       
         routers.append(router)
     
-    # Add hosts (one per router)
-    info('*** Adding hosts\n')
-    hosts = []
-    for i in range(num_routers):
-        host_name = 'h{0}'.format(i+1)
-        host = net.addHost(host_name, cls=Host, 
-                         ip='10.0.{0}.100/24'.format(i+1), 
-                         defaultRoute='via 10.0.{0}.1'.format(i+1))
-        hosts.append(host)
+    # Add switches
+    switches = []
+    print('*** Adding switches')
+    for i in range(num):
+        switch_name = 's{0}'.format(i+1)
+        switch = net.addSwitch(switch_name, cls=OVSKernelSwitch)
+        switches.append(switch)
     
-    # Connect hosts to their respective routers
-    info('*** Creating links between hosts and routers\n')
-    for i in range(num_routers):
-        net.addLink(hosts[i], routers[i], 
+    # Add hosts 
+    print('*** Adding hosts')
+    hosts = []
+    for i in range(num):
+        for j in range(2):
+            host_index = i*2 + j + 1
+            host_name = 'h{0}'.format(host_index)
+            host = net.addHost(host_name, cls=Host, 
+                             ip='10.0.{0}.{1}/24'.format(i+1, 100+j), 
+                             defaultRoute='via 10.0.{0}.1'.format(i+1))
+            hosts.append(host)
+            net.addLink(host, switches[i])
+    
+    # Connect switches to their respective routers
+    print('*** Creating links')
+    for i in range(num):
+        net.addLink(switches[i], routers[i], 
                    intfName2='r{0}-eth0'.format(i+1), 
                    params2={'ip': '10.0.{0}.1/24'.format(i+1)})
     
     # Create mesh topology by connecting all routers to each other
-    info('*** Creating mesh links between routers\n')
     link_count = 0
-    for i in range(num_routers):
-        for j in range(i+1, num_routers):
+    for i in range(num):
+        for j in range(i+1, num):
             link_count += 1
-            # Create subnet for each router-router link
-            subnet = 10 + link_count  # Start from subnet 10.0.11.0/24 and increment
+            subnet = 10 + link_count 
             
             # Add link between routers
             intfName1 = 'r{0}-eth{1}'.format(i+1, j+1)
@@ -72,20 +78,16 @@ def meshNetworkWithRouters():
             routers[j].cmd('ip route add 10.0.{0}.0/24 via 10.0.{1}.{2}'.format(i+1, subnet, i+1))
     
     # Start network
-    info('*** Starting network\n')
+    print('*** Starting network')
     net.build()
     
     # Start controller
     c0.start()
     
-    # Run CLI
-    info('*** Running CLI\n')
-    CLI(net)
-    
-    # Stop network
-    info('*** Stopping network\n')
-    net.stop()
+    # Start switches
+    for switch in switches:
+        switch.start([c0])
 
 if __name__ == '__main__':
-    setLogLevel('info')
-    meshNetworkWithRouters()
+    setLogLevel('info')  
+    topology()

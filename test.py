@@ -1,83 +1,55 @@
 from mininet.net import Mininet
-from mininet.util import dumpNodeConnections
+from mininet.cli import CLI
 from mininet.log import setLogLevel
-from topology import ComplexTopology
 import time
+from topology import topology  # Importing your topology
 
-def run_tests():
-    # Setup network
-    print("Starting network setup...")
-    setLogLevel('info')
-    topo = ComplexTopology()
-    net = Mininet(topo=topo)
-    net.start()
+def test_connectivity(net):
+    print("\n[TEST] Basic Connectivity Check")
+    for h in range(1, 11):
+        for h_target in range(h+1, 11):
+            src = net.get('h' + str(h))
+            dst = net.get('h' + str(h_target))
+            result = src.cmd('ping -c 2 ' + dst.IP())
+            if '0% packet loss' in result:
+                print(src.name + ' can reach ' + dst.name + ' ✅')
+            else:
+                print(src.name + ' cannot reach ' + dst.name + ' ❌')
 
-    # Get hosts
-    hosts = net.hosts
-    h1, h2, h3, h4, h5, h6 = hosts[:6]
+def test_routing(net):
+    print("\n[TEST] Routing Check")
+    for r in range(1, 6):
+        router = net.get('r' + str(r))
+        result = router.cmd('ip route')
+        print('Routing table for ' + router.name + ':\n' + result)
 
-    # Test 1: Basic connectivity
-    print("\n=== Test 1: Basic Connectivity ===")
-    dumpNodeConnections(net.hosts)
-    connectivity_result = net.pingAll()
-    print("Ping all result: " + str(connectivity_result) + "% packet loss")
+def test_latency(net):
+    print("\n[TEST] Latency Measurement")
+    h1, h2 = net.get('h1', 'h10')
+    result = h1.cmd('ping -c 4 ' + h2.IP())
+    print(result)
 
-    # Test 2: Bandwidth test using iperf
-    print("\n=== Test 2: Bandwidth Tests ===")
-    for src, dst in [(h1, h6), (h2, h5), (h3, h4)]:
-        net.iperf((src, dst), seconds=5)
-        print("Bandwidth test " + str(src) + " -> " + str(dst) + " complete")
+def test_bandwidth(net):
+    print("\n[TEST] Bandwidth Test")
+    h1, h10 = net.get('h1', 'h10')
+    h10.cmd('iperf -s -D')
+    time.sleep(2)
+    result = h1.cmd('iperf -c ' + h10.IP() + ' -t 5')
+    print(result)
+    h10.cmd('pkill -f iperf')
 
-    # Test 3: Path redundancy test
-    print("\n=== Test 3: Path Redundancy Test ===")
-    # Disable one link and test connectivity
-    net.configLinkStatus('s1', 's2', 'down')
-    print("Disabled link between s1 and s2")
-    redundancy_result = net.pingAll()
-    print("Ping all with s1-s2 down: " + str(redundancy_result) + "% packet loss")
-    net.configLinkStatus('s1', 's2', 'up')
-    print("Restored link between s1 and s2")
-
-    # Test 4: Latency test
-    print("\n=== Test 4: Latency Test ===")
-    for src, dst in [(h1, h6), (h2, h5)]:
-        result = net.ping([src, dst], timeout=5)
-        print("Latency " + str(src) + " -> " + str(dst) + ": " + str(result) + "% packet loss")
-
-    # Test 5: Link failure and recovery
-    print("\n=== Test 5: Link Failure and Recovery ===")
-    print("Testing with multiple link failures...")
-    net.configLinkStatus('s5', 's6', 'down')
-    net.configLinkStatus('s4', 's7', 'down')
-    failure_result = net.pingAll()
-    print("Ping all with multiple links down: " + str(failure_result) + "% packet loss")
-    
-    # Restore links and verify recovery
-    net.configLinkStatus('s5', 's6', 'up')
-    net.configLinkStatus('s4', 's7', 'up')
-    recovery_result = net.pingAll()
-    print("Ping all after recovery: " + str(recovery_result) + "% packet loss")
-
-    # Test 6: Throughput under load
-    print("\n=== Test 6: Throughput Under Load ===")
-    server = h6
-    clients = [h1, h2, h3]
-    server.cmd('iperf -s &')
-    time.sleep(1)
-    for client in clients:
-        result = client.cmd('iperf -c ' + server.IP() + ' -t 5')
-        print("Throughput " + str(client) + " -> " + str(server) + ": " + result)
-
-    # Cleanup
-    print("\nCleaning up...")
-    net.stop()
+def run_tests(net):
+    test_connectivity(net)
+    test_routing(net)
+    test_latency(net)
+    test_bandwidth(net)
 
 def main():
-    print("Starting comprehensive network tests...")
-    print("=" * 50)
-    run_tests()
-    print("=" * 50)
-    print("Tests completed!")
+    setLogLevel('info')
+    net = Mininet()
+    topology()  # Call your topology function
+    run_tests(net)
+    net.stop()
 
 if __name__ == '__main__':
     main()
