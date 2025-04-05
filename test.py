@@ -88,17 +88,10 @@ def check_routing_tables(net):
 def test_simultaneous_traffic(net, num_pairs=3, duration=10):  
     print("\n*** Testing simultaneous network traffic between {0} host pairs for {1} seconds\n".format(num_pairs, duration))
     
-    # Get all hosts and filter out routers
     all_hosts = [h for h in net.hosts if h.name.startswith('h')]
     
-    if len(all_hosts) < num_pairs * 2:
-        print("WARNING: Not enough hosts for {0} pairs. Using {1} pairs instead.".format(
-            num_pairs, len(all_hosts) // 2))
-        num_pairs = len(all_hosts) // 2
-    
-    # Select random pairs of hosts
     host_pairs = []
-    hosts_copy = all_hosts[:]  # Create a copy without using .copy() method
+    hosts_copy = all_hosts[:] 
     random.shuffle(hosts_copy)
     
     for i in range(num_pairs):
@@ -107,14 +100,12 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
             dest = hosts_copy.pop()
             host_pairs.append((source, dest))
     
-    # Start iperf servers on destination hosts
     for _, dest in host_pairs:
         dest.cmd('iperf -s &')
     
     print("*** Started {0} iperf servers".format(len(host_pairs)))
-    time.sleep(1)  # Give servers time to start
+    time.sleep(1) 
     
-    # Create threads to run iperf clients
     threads = []
     results = {}
     
@@ -123,19 +114,16 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         iperf_result = source.cmd('iperf -c {0} -t {1} -i 1'.format(dest.IP(), duration))
         results[pair_id] = iperf_result
     
-    # Start all client threads simultaneously
     for i, (source, dest) in enumerate(host_pairs):
         thread = Thread(target=run_iperf_client, args=(source, dest, i))
         threads.append(thread)
         thread.start()
     
-    # Wait for all threads to complete
     for thread in threads:
         thread.join()
     
     print("\n*** All traffic tests completed")
     
-    # Process and display results
     print("\n*** SIMULTANEOUS TRAFFIC TEST RESULTS ***")
     
     total_bandwidth = 0
@@ -144,7 +132,6 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     for i, (source, dest) in enumerate(host_pairs):
         iperf_result = results[i]
         
-        # Extract bandwidth from results
         bandwidth = 0.0
         for line in iperf_result.split('\n'):
             if 'Mbits/sec' in line:
@@ -167,7 +154,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
                 total_latency += avg_latency
             if 'packet loss' in line:
                 packet_loss = line.split(',')[2].strip()
-                total_packet_loss += float(packet_loss.split('%')[0])
+                total_loss += float(packet_loss.split('%')[0])
         
         print("Pair {0}: {1} -> {2}".format(i+1, source.name, dest.name))
         print("  - Bandwidth: {0}".format(bandwidth))
@@ -178,7 +165,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         dest.cmd('kill %iperf')
     
     print("\n*** test results\n")
-    print(" average packet loss: {0}".format(packet_loss/num_pairs))
+    print(" average packet loss: {0}".format(total_loss/num_pairs))
     print(" average latency: {0}".format(total_latency/num_pairs))
     print(" average bandwidth: {0}".format(total_bandwidth/num_pairs))
     
