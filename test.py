@@ -237,6 +237,7 @@ def run_all_tests():
         test_latency(net)
         check_routing_tables(net)
         test_path_tracing(net)
+        test_simultaneous_traffic(net, num_pairs=3, duration=10)
         
     except Exception as e:
         print("*** Error during test execution: {0}\n".format(e))
