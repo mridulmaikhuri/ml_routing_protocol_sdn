@@ -24,7 +24,7 @@ def test_connectivity(net):
             
             # Ping test
             ping_result = source.cmd('ping -c 2 -W 1 {0}'.format(dest.IP()))
-            print(' packet loss: {0}'.format(ping_result.split(' packet')[0].split()[-1]))
+            print(' packet loss: {0}'.format(ping_result.split(' packet loss')[0].split()[-1]))
 
             # Latency calculation (extract numeric value)
             avg_latency = 0.0
@@ -83,7 +83,7 @@ def check_routing_tables(net):
                 print(" FAIL: Missing route to {0} in {1}".format(subnet, router.name))
                 all_correct = False
         if all_correct:
-            print(" PASS: All required routes are present in routing table\n")
+            print(" PASS: All required routes are present in routing table")
 
 def test_simultaneous_traffic(net, num_pairs=5, duration=10):
     print("\n*** Testing simultaneous network traffic\n")
