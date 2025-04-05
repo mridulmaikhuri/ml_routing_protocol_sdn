@@ -312,10 +312,13 @@ def test_fault_tolerance(net, num_failures=1):
     print("*** Waiting for network to recover")
     time.sleep(5)
     
+    # Create a string representation of failed links
+    failed_links_str = ", ".join(["{0}-{1}".format(link.intf1.node.name, link.intf2.node.name) 
+                                for link in failed_links])
+    
     # Print comparison results
     print("\n*** FAULT TOLERANCE TEST RESULTS ***")
-    print("Failed links: {0}".format(", ".join([f"{link.intf1.node.name}-{link.intf2.node.name}" 
-                                             for link in failed_links])))
+    print("Failed links: {0}".format(failed_links_str))
     
     for i, (source, dest) in enumerate(host_pairs):
         print("\nPair {0}: {1} -> {2}".format(i+1, source.name, dest.name))
@@ -356,12 +359,12 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Path before failure:")
                 for line in baseline['traceroute'].split('\n'):
                     if line.strip() and not line.startswith('traceroute'):
-                        print(f"    {line}")
+                        print("    {0}".format(line))
                 
                 print("  Path after failure:")
                 for line in failure['traceroute'].split('\n'):
                     if line.strip() and not line.startswith('traceroute'):
-                        print(f"    {line}")
+                        print("    {0}".format(line))
         
         # Overall resilience assessment
         if not baseline['connectivity']:
@@ -382,7 +385,6 @@ def test_fault_tolerance(net, num_failures=1):
                     print("  ASSESSMENT: RESILIENT - Minimal performance impact")
             except (ValueError, IndexError):
                 print("  ASSESSMENT: UNKNOWN - Could not calculate performance impact")
-    
 
 def run_all_tests():
     net = None
