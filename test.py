@@ -168,6 +168,7 @@ def test_simultaneous_traffic(net, num_pairs=5, duration=10):
     print("\n*** Aggregate network bandwidth: {0:.2f} Mbits/sec".format(total_bandwidth))
 
 def run_all_tests():
+    net = None
     try:
         setLogLevel('info')
         net = topology()
