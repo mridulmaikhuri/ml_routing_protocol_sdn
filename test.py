@@ -12,8 +12,8 @@ def test_connectivity(net):
     hosts = [net.get(h) for h in host_names]
     total_tests = 0
     successful_tests = 0
-    total_latency = 0
-    total_bandwidth = 0
+    total_latency = 0.0  # Changed to float
+    total_bandwidth = 0.0  # Changed to float
     
     for i in range(len(hosts)):
         for j in range(i + 1, len(hosts)):
@@ -21,49 +21,52 @@ def test_connectivity(net):
             dest = hosts[j]
             print('{0} -> {1}'.format(source.name, dest.name))
             total_tests += 1
+            
+            # Ping test
             ping_result = source.cmd('ping -c 2 -W 1 {0}'.format(dest.IP()))
-            print(' packet loss: {0}'.format(ping_result.spli(' packet')[0].split()[-1]))
+            print(' packet loss: {0}'.format(ping_result.split(' packet')[0].split()[-1]))
 
-            avg_latency = "Unknown"
+            # Latency calculation (extract numeric value)
+            avg_latency = 0.0
             for line in ping_result.split('\n'):
                 if 'min/avg/max' in line:
-                    avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
+                    avg_latency = float(line.split('=')[1].split('/')[1].strip())
                     break
             
-            if (avg_latency != "Unknown"):
-                total_latency += avg_latency
+            total_latency += avg_latency
+            print(" Latency: {0} ms".format(avg_latency))
 
-            print(" Latency: {0}".format(avg_latency))
-
+            # Bandwidth test
             dest.cmd('iperf -s &')
             time.sleep(1)
             iperf_result = source.cmd('iperf -c {0} -t 5'.format(dest.IP()))
             dest.cmd('kill %iperf')
             
-            bandwidth = "Unknown"
-
+            # Bandwidth calculation (extract numeric value)
+            bandwidth = 0.0
             for line in iperf_result.split('\n'):
                 if 'Mbits/sec' in line:
-                    bandwidth = line.split('Mbits/sec')[0].split()[-1] + " Mbits/sec"
+                    bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
                     break
                 elif 'Gbits/sec' in line:
-                    bandwidth = line.split('Gbits/sec')[0].split()[-1] + " Gbits/sec"
+                    bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000  # Convert Gbps to Mbps
                     break
             
-            if (bandwidth != "Unknown"):
-                total_bandwidth += bandwidth
+            total_bandwidth += bandwidth
+            print(' bandwidth: {0} Mbits/sec'.format(bandwidth))
             
-            print(' bandwidth: {0}'.format(bandwidth))
+            if avg_latency > 0:  # Consider test successful if we got latency data
+                successful_tests += 1
     
+    # Calculate averages
     success_rate = (successful_tests / total_tests) * 100 if total_tests > 0 else 0
-    avg_latency = total_latency/successful_tests
-    avg_bandwidth = total_bandwidth/successful_tests
+    avg_latency = total_latency / successful_tests if successful_tests > 0 else 0
+    avg_bandwidth = total_bandwidth / successful_tests if successful_tests > 0 else 0
 
     print("\n*** Connectivity tests completed")
     print(" Success Rate: {0:.1f}%".format(success_rate))
-    print(" Average Latency: {0:.1f}%".format(avg_latency))
-    print(" Average Bandwidth: {0:.1f}%".format(avg_bandwidth))
-
+    print(" Average Latency: {0:.2f} ms".format(avg_latency))
+    print(" Average Bandwidth: {0:.2f} Mbits/sec".format(avg_bandwidth))
 
 def check_routing_tables(net):
     print("\n*** Checking routing tables on all routers\n")
