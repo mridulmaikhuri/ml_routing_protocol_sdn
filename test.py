@@ -139,6 +139,8 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     print("\n*** SIMULTANEOUS TRAFFIC TEST RESULTS ***")
     
     total_bandwidth = 0
+    total_latency = 0
+    total_loss = 0
     for i, (source, dest) in enumerate(host_pairs):
         iperf_result = results[i]
         
@@ -154,7 +156,6 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         
         total_bandwidth += bandwidth
         
-        # Measure latency under load
         ping_result = source.cmd('ping -c 3 -i 0.2 {0}'.format(dest.IP()))
         
         avg_latency = "Unknown"
@@ -162,39 +163,25 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         
         for line in ping_result.split('\n'):
             if 'min/avg/max' in line:
-                avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
+                avg_latency = float(line.split('=')[1].split('/')[1].strip())
+                total_latency += avg_latency
             if 'packet loss' in line:
                 packet_loss = line.split(',')[2].strip()
+                total_packet_loss += float(packet_loss.split('%')[0])
         
         print("Pair {0}: {1} -> {2}".format(i+1, source.name, dest.name))
         print("  - Bandwidth: {0}".format(bandwidth))
-        print("  - Latency under load: {0}".format(avg_latency))
+        print("  - Latency under load: {0} ms".format(avg_latency))
         print("  - Packet loss: {0}".format(packet_loss))
-    
-    # Kill all iperf servers
+
     for _, dest in host_pairs:
         dest.cmd('kill %iperf')
     
-    print("\n*** Aggregate network bandwidth: {0:.2f} Mbits/sec".format(total_bandwidth))
+    print("\n*** test results\n")
+    print(" average packet loss: {0}".format(packet_loss/num_pairs))
+    print(" average latency: {0}".format(total_latency/num_pairs))
+    print(" average bandwidth: {0}".format(total_bandwidth/num_pairs))
     
-    # Test network congestion by pinging between hosts not involved in iperf
-    remaining_hosts = hosts_copy
-    if len(remaining_hosts) >= 2:
-        print("\n*** Testing network congestion on uninvolved hosts")
-        h_source = remaining_hosts[0]
-        h_dest = remaining_hosts[1]
-        
-        print("Measuring latency between {0} and {1} during traffic tests".format(
-            h_source.name, h_dest.name))
-        
-        ping_result = h_source.cmd('ping -c 5 {0}'.format(h_dest.IP()))
-        
-        avg_latency = "Unknown"
-        for line in ping_result.split('\n'):
-            if 'min/avg/max' in line:
-                avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
-        
-        print("Latency on uncongested path: {0}".format(avg_latency))
 
 def run_all_tests():
     net = None
