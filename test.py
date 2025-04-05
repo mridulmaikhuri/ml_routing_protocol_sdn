@@ -117,7 +117,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     
     # Select random pairs of hosts
     host_pairs = []
-    hosts_copy = all_hosts.copy()
+    hosts_copy = all_hosts[:]  # Create a copy without using .copy() method
     random.shuffle(hosts_copy)
     
     for i in range(num_pairs):
