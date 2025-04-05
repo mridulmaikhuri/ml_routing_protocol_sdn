@@ -85,7 +85,129 @@ def check_routing_tables(net):
         if all_correct:
             print(" PASS: All required routes are present in routing table")
 
-def test_simultaneous_traffic(net, num_pairs=5, duration=10):
+def test_simultaneous_traffic(net, num_pairs=3, duration=10):
+    """
+    Test simultaneous network traffic between multiple pairs of hosts.
+    
+    Args:
+        net: Mininet network object
+        num_pairs: Number of host pairs to test simultaneously (default: 3)
+        duration: Duration of the test in seconds (default: 10)
+    """
+    import random
+    from threading import Thread
+    
+    print("\n*** Testing simultaneous network traffic between {0} host pairs for {1} seconds\n".format(num_pairs, duration))
+    
+    # Get all hosts and filter out routers
+    all_hosts = [h for h in net.hosts if h.name.startswith('h')]
+    
+    if len(all_hosts) < num_pairs * 2:
+        print("WARNING: Not enough hosts for {0} pairs. Using {1} pairs instead.".format(
+            num_pairs, len(all_hosts) // 2))
+        num_pairs = len(all_hosts) // 2
+    
+    # Select random pairs of hosts
+    host_pairs = []
+    hosts_copy = all_hosts[:]  # Create a copy without using .copy() method
+    random.shuffle(hosts_copy)
+    
+    for i in range(num_pairs):
+        if len(hosts_copy) >= 2:
+            source = hosts_copy.pop()
+            dest = hosts_copy.pop()
+            host_pairs.append((source, dest))
+    
+    # Start iperf servers on destination hosts
+    for _, dest in host_pairs:
+        dest.cmd('iperf -s &')
+    
+    print("*** Started {0} iperf servers".format(len(host_pairs)))
+    time.sleep(1)  # Give servers time to start
+    
+    # Create threads to run iperf clients
+    threads = []
+    results = {}
+    
+    def run_iperf_client(source, dest, pair_id):
+        print("*** Starting traffic from {0} to {1}".format(source.name, dest.name))
+        iperf_result = source.cmd('iperf -c {0} -t {1} -i 1'.format(dest.IP(), duration))
+        results[pair_id] = iperf_result
+    
+    # Start all client threads simultaneously
+    for i, (source, dest) in enumerate(host_pairs):
+        thread = Thread(target=run_iperf_client, args=(source, dest, i))
+        threads.append(thread)
+        thread.start()
+    
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+    
+    print("\n*** All traffic tests completed")
+    
+    # Process and display results
+    print("\n*** SIMULTANEOUS TRAFFIC TEST RESULTS ***")
+    
+    total_bandwidth = 0
+    for i, (source, dest) in enumerate(host_pairs):
+        iperf_result = results[i]
+        
+        # Extract bandwidth from results
+        bandwidth = "Unknown"
+        for line in iperf_result.split('\n'):
+            if 'Mbits/sec' in line and 'sec' in line and '-' in line:
+                # Look for the summary line
+                if '0.0-' in line:
+                    bandwidth = line.split('Mbits/sec')[0].split()[-1]
+                    try:
+                        total_bandwidth += float(bandwidth)
+                    except ValueError:
+                        pass
+                    bandwidth += " Mbits/sec"
+                    break
+        
+        # Measure latency under load
+        ping_result = source.cmd('ping -c 3 -i 0.2 {0}'.format(dest.IP()))
+        
+        avg_latency = "Unknown"
+        packet_loss = "Unknown"
+        
+        for line in ping_result.split('\n'):
+            if 'min/avg/max' in line:
+                avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
+            if 'packet loss' in line:
+                packet_loss = line.split(',')[2].strip()
+        
+        print("Pair {0}: {1} -> {2}".format(i+1, source.name, dest.name))
+        print("  - Bandwidth: {0}".format(bandwidth))
+        print("  - Latency under load: {0}".format(avg_latency))
+        print("  - Packet loss: {0}".format(packet_loss))
+    
+    # Kill all iperf servers
+    for _, dest in host_pairs:
+        dest.cmd('kill %iperf')
+    
+    print("\n*** Aggregate network bandwidth: {0:.2f} Mbits/sec".format(total_bandwidth))
+    
+    # Test network congestion by pinging between hosts not involved in iperf
+    remaining_hosts = hosts_copy
+    if len(remaining_hosts) >= 2:
+        print("\n*** Testing network congestion on uninvolved hosts")
+        h_source = remaining_hosts[0]
+        h_dest = remaining_hosts[1]
+        
+        print("Measuring latency between {0} and {1} during traffic tests".format(
+            h_source.name, h_dest.name))
+        
+        ping_result = h_source.cmd('ping -c 5 {0}'.format(h_dest.IP()))
+        
+        avg_latency = "Unknown"
+        for line in ping_result.split('\n'):
+            if 'min/avg/max' in line:
+                avg_latency = line.split('=')[1].split('/')[1].strip() + " ms"
+        
+        print("Latency on uncongested path: {0}".format(avg_latency))
     print("\n*** Testing simultaneous network traffic\n")
     
     all_hosts = [h for h in net.hosts if h.name.startswith('h')]
