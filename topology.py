@@ -1,5 +1,5 @@
 from mininet.net import Mininet
-from mininet.node import Controller
+from mininet.node import Controller, RemoteController
 from mininet.node import Host, Node
 from mininet.node import OVSKernelSwitch
 from mininet.cli import CLI
@@ -11,7 +11,7 @@ def topology():
 
     # Add controller
     print('*** Adding controller')
-    c0 = net.addController(name='c0', controller=Controller, protocol='tcp', port=6633)
+    c0 = net.addController(name='c0', controller=RemoteController, ip='127.0.0.1', port=6633)
 
     # Define number of routers and switches
     num = 5
