@@ -12,8 +12,8 @@ def test_connectivity(net):
     hosts = [net.get(h) for h in host_names]
     total_tests = 0
     successful_tests = 0
-    total_latency = 0.0  # Changed to float
-    total_bandwidth = 0.0  # Changed to float
+    total_latency = 0.0  
+    total_bandwidth = 0.0  
     
     for i in range(len(hosts)):
         for j in range(i + 1, len(hosts)):
@@ -26,7 +26,7 @@ def test_connectivity(net):
             ping_result = source.cmd('ping -c 2 -W 1 {0}'.format(dest.IP()))
             print(' packet loss: {0}'.format(ping_result.split(' packet loss')[0].split()[-1]))
 
-            # Latency calculation (extract numeric value)
+            # Latency calculation 
             avg_latency = 0.0
             for line in ping_result.split('\n'):
                 if 'min/avg/max' in line:
@@ -49,13 +49,13 @@ def test_connectivity(net):
                     bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
                     break
                 elif 'Gbits/sec' in line:
-                    bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000  # Convert Gbps to Mbps
+                    bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000 
                     break
             
             total_bandwidth += bandwidth
             print(' bandwidth: {0} Mbits/sec'.format(bandwidth))
             
-            if avg_latency > 0:  # Consider test successful if we got latency data
+            if avg_latency > 0:  
                 successful_tests += 1
     
     # Calculate averages
@@ -64,12 +64,12 @@ def test_connectivity(net):
     avg_bandwidth = total_bandwidth / successful_tests if successful_tests > 0 else 0
 
     print("\n*** Connectivity tests completed")
-    print(" Success Rate: {0:.1f}%".format(success_rate))
+    print(" Success Rate: {0:.2f}%".format(success_rate))
     print(" Average Latency: {0:.2f} ms".format(avg_latency))
     print(" Average Bandwidth: {0:.2f} Mbits/sec".format(avg_bandwidth))
 
 def test_simultaneous_traffic(net, num_pairs=3, duration=10):  
-    print("\n*** Testing simultaneous network traffic between {0} host pairs for {1} seconds\n".format(num_pairs, duration))
+    print("\n*** Testing simultaneous network traffic\n")
     
     all_hosts = [h for h in net.hosts if h.name.startswith('h')]
     
@@ -94,14 +94,60 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     
     def run_iperf_client(source, dest, pair_id):
         print("*** Starting traffic from {0} to {1}".format(source.name, dest.name))
+        
+        # Start ping in background and capture PID
+        ping_cmd = 'ping -c {0} -i 0.2 {1} > /tmp/ping_results_{2} 2>&1 &'.format(
+            duration * 5,  # Run pings for duration of test
+            dest.IP(), 
+            pair_id
+        )
+        source.cmd(ping_cmd)
+        ping_pid = source.cmd("echo $!")
+        
+        # Run iperf and extract bandwidth directly in this thread
         iperf_result = source.cmd('iperf -c {0} -t {1} -i 1'.format(dest.IP(), duration))
-        results[pair_id] = iperf_result
+        
+        bandwidth = 0.0
+        for line in iperf_result.split('\n'):
+            if 'Mbits/sec' in line and 'sec' in line.split('Mbits/sec')[0]:
+                bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
+                break
+            elif 'Gbits/sec' in line and 'sec' in line.split('Gbits/sec')[0]:
+                bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000  
+                break
+        
+        # Kill the ping process
+        source.cmd('kill ' + ping_pid.strip())
+        
+        # Get ping results that were collected during the iperf test
+        ping_result = source.cmd('cat /tmp/ping_results_{0}'.format(pair_id))
+        source.cmd('rm /tmp/ping_results_{0}'.format(pair_id))
+        
+        avg_latency = "Unknown"
+        packet_loss = "Unknown"
+        
+        for line in ping_result.split('\n'):
+            if 'min/avg/max' in line:
+                avg_latency = float(line.split('=')[1].split('/')[1].strip())
+            if 'packet loss' in line:
+                packet_loss = line.split(',')[2].strip()
+        
+        # Store all results for this pair
+        results[pair_id] = {
+            'source': source.name,
+            'dest': dest.name,
+            'bandwidth': bandwidth,
+            'latency': avg_latency,
+            'packet_loss': packet_loss
+        }
     
+    # Start all threads
     for i, (source, dest) in enumerate(host_pairs):
         thread = Thread(target=run_iperf_client, args=(source, dest, i))
         threads.append(thread)
         thread.start()
     
+    # Wait for all threads to complete
     for thread in threads:
         thread.join()
     
@@ -112,45 +158,39 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     total_bandwidth = 0
     total_latency = 0
     total_loss = 0
-    for i, (source, dest) in enumerate(host_pairs):
-        iperf_result = results[i]
+    
+    for i in range(len(host_pairs)):
+        result = results[i]
         
-        bandwidth = 0.0
-        for line in iperf_result.split('\n'):
-            if 'Mbits/sec' in line:
-                bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
-                break
-            elif 'Gbits/sec' in line:
-                bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000  
-                break
+        bandwidth = result['bandwidth']
+        avg_latency = result['latency']
+        packet_loss = result['packet_loss']
+        
+        # Convert packet loss from string to float for calculation
+        loss_value = 0
+        if packet_loss != "Unknown":
+            loss_value = float(packet_loss.split('%')[0])
         
         total_bandwidth += bandwidth
         
-        ping_result = source.cmd('ping -c 3 -i 0.2 {0}'.format(dest.IP()))
+        if avg_latency != "Unknown":
+            total_latency += avg_latency
+            
+        total_loss += loss_value
         
-        avg_latency = "Unknown"
-        packet_loss = "Unknown"
-        
-        for line in ping_result.split('\n'):
-            if 'min/avg/max' in line:
-                avg_latency = float(line.split('=')[1].split('/')[1].strip())
-                total_latency += avg_latency
-            if 'packet loss' in line:
-                packet_loss = line.split(',')[2].strip()
-                total_loss += float(packet_loss.split('%')[0])
-        
-        print("Pair {0}: {1} -> {2}".format(i+1, source.name, dest.name))
-        print("  - Bandwidth: {0}".format(bandwidth))
+        print("Pair {0}: {1} -> {2}".format(i+1, result['source'], result['dest']))
+        print("  - Bandwidth: {0} Mbits/sec".format(bandwidth))
         print("  - Latency under load: {0} ms".format(avg_latency))
         print("  - Packet loss: {0}".format(packet_loss))
 
+    # Clean up iperf servers
     for _, dest in host_pairs:
         dest.cmd('kill %iperf')
     
     print("\n*** test results")
-    print(" average packet loss: {0}".format(total_loss/num_pairs))
-    print(" average latency: {0}".format(total_latency/num_pairs))
-    print(" average bandwidth: {0}".format(total_bandwidth/num_pairs))
+    print(" average packet loss: {0}%".format(total_loss/len(host_pairs)))
+    print(" average latency: {0} ms".format(total_latency/len(host_pairs)))
+    print(" average bandwidth: {0} Mbits/sec".format(total_bandwidth/len(host_pairs)))
 
 def test_fault_tolerance(net, num_failures=1):
     print("\n*** Testing network fault tolerance with {0} link failure(s) ***\n".format(num_failures))
