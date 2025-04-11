@@ -340,8 +340,8 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Latency after: {0}".format(failure['latency']))
             
             try:
-                baseline_bw = baseline_bw
-                failure_bw = failure_bw
+                baseline_bw = baseline['bandwidth']
+                failure_bw = failure['bandwidth']
                 bw_change = ((failure_bw - baseline_bw) / baseline_bw) * 100
                 print("  Bandwidth before: {0}".format(baseline['bandwidth']))
                 print("  Bandwidth after: {0} ({1:+.1f}%)".format(
