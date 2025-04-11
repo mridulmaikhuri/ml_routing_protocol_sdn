@@ -340,13 +340,19 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Latency after: {0}".format(failure['latency']))
             
             try:
-                baseline_bw = baseline['bandwidth']
-                failure_bw = failure['bandwidth']
-                bw_change = ((failure_bw - baseline_bw) / baseline_bw) * 100
-                print("  Bandwidth before: {0}".format(baseline['bandwidth']))
-                print("  Bandwidth after: {0} ({1:+.1f}%)".format(
-                    failure['bandwidth'], bw_change))
-            except (ValueError, IndexError):
+                # Make sure both are float values before calculation
+                baseline_bw = float(baseline['bandwidth']) if isinstance(baseline['bandwidth'], str) else baseline['bandwidth']
+                failure_bw = float(failure['bandwidth']) if isinstance(failure['bandwidth'], str) else failure['bandwidth']
+                
+                if baseline_bw != "N/A" and failure_bw != "N/A":
+                    bw_change = ((failure_bw - baseline_bw) / baseline_bw) * 100
+                    print("  Bandwidth before: {0}".format(baseline['bandwidth']))
+                    print("  Bandwidth after: {0} ({1:+.1f}%)".format(
+                        failure['bandwidth'], bw_change))
+                else:
+                    print("  Bandwidth before: {0}".format(baseline['bandwidth']))
+                    print("  Bandwidth after: {0}".format(failure['bandwidth']))
+            except (ValueError, TypeError, ZeroDivisionError):
                 print("  Bandwidth before: {0}".format(baseline['bandwidth']))
                 print("  Bandwidth after: {0}".format(failure['bandwidth']))
 
