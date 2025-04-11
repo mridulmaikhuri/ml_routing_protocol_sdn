@@ -120,7 +120,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         source.cmd('rm /tmp/ping_results_{0}'.format(pair_id))
         
         avg_latency = "Unknown"
-        packet_loss = "Unknown"
+        packet_loss = 100.0
         
         for line in ping_result.split('\n'):
             if 'min/avg/max' in line:
@@ -272,10 +272,13 @@ def test_fault_tolerance(net, num_failures=1):
                 time.sleep(1)
                 bandwidth_result = source.cmd('iperf -c {0} -t 3'.format(dest.IP()))
                 dest.cmd('kill %iperf')
-                
                 for line in bandwidth_result.split('\n'):
-                    if 'Mbits/sec' in line and '0.0-' in line:
-                        bandwidth = line.split('Mbits/sec')[0].split()[-1] + " Mbits/sec"
+                    if 'Mbits/sec' in line:
+                        bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
+                        break
+                    elif 'Gbits/sec' in line:
+                        bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000 
+                        break
                   
             
             failure_results[i] = {
@@ -337,8 +340,8 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Latency after: {0}".format(failure['latency']))
             
             try:
-                baseline_bw = float(baseline['bandwidth'].split()[0])
-                failure_bw = float(failure['bandwidth'].split()[0])
+                baseline_bw = baseline_bw
+                failure_bw = failure_bw
                 bw_change = ((failure_bw - baseline_bw) / baseline_bw) * 100
                 print("  Bandwidth before: {0}".format(baseline['bandwidth']))
                 print("  Bandwidth after: {0} ({1:+.1f}%)".format(
