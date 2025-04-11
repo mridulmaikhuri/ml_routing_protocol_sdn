@@ -26,7 +26,6 @@ def test_connectivity(net):
             ping_result = source.cmd('ping -c 2 -W 1 {0}'.format(dest.IP()))
             print(' packet loss: {0}'.format(ping_result.split(' packet loss')[0].split()[-1]))
 
-            # Latency calculation 
             avg_latency = 0.0
             for line in ping_result.split('\n'):
                 if 'min/avg/max' in line:
@@ -42,7 +41,6 @@ def test_connectivity(net):
             iperf_result = source.cmd('iperf -c {0} -t 5'.format(dest.IP()))
             dest.cmd('kill %iperf')
             
-            # Bandwidth calculation (extract numeric value)
             bandwidth = 0.0
             for line in iperf_result.split('\n'):
                 if 'Mbits/sec' in line:
@@ -95,16 +93,16 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
     def run_iperf_client(source, dest, pair_id):
         print("*** Starting traffic from {0} to {1}".format(source.name, dest.name))
         
-        # Start ping in background and capture PID
+        # ping test
         ping_cmd = 'ping -c {0} -i 0.2 {1} > /tmp/ping_results_{2} 2>&1 &'.format(
-            duration * 5,  # Run pings for duration of test
+            duration * 5,  
             dest.IP(), 
             pair_id
         )
         source.cmd(ping_cmd)
         ping_pid = source.cmd("echo $!")
         
-        # Run iperf and extract bandwidth directly in this thread
+        # Bandwidth test
         iperf_result = source.cmd('iperf -c {0} -t {1} -i 1'.format(dest.IP(), duration))
         
         bandwidth = 0.0
@@ -116,10 +114,8 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
                 bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000  
                 break
         
-        # Kill the ping process
         source.cmd('kill ' + ping_pid.strip())
         
-        # Get ping results that were collected during the iperf test
         ping_result = source.cmd('cat /tmp/ping_results_{0}'.format(pair_id))
         source.cmd('rm /tmp/ping_results_{0}'.format(pair_id))
         
@@ -132,7 +128,6 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
             if 'packet loss' in line:
                 packet_loss = line.split(',')[2].strip()
         
-        # Store all results for this pair
         results[pair_id] = {
             'source': source.name,
             'dest': dest.name,
@@ -166,7 +161,6 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         avg_latency = result['latency']
         packet_loss = result['packet_loss']
         
-        # Convert packet loss from string to float for calculation
         loss_value = 0
         if packet_loss != "Unknown":
             loss_value = float(packet_loss.split('%')[0])
@@ -183,7 +177,6 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         print("  - Latency under load: {0} ms".format(avg_latency))
         print("  - Packet loss: {0}".format(packet_loss))
 
-    # Clean up iperf servers
     for _, dest in host_pairs:
         dest.cmd('kill %iperf')
     
@@ -195,36 +188,14 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
 def test_fault_tolerance(net, num_failures=1):
     print("\n*** Testing network fault tolerance with {0} link failure(s) ***\n".format(num_failures))
     
-    # Store original network state for baseline measurements
     all_hosts = [h for h in net.hosts if h.name.startswith('h')]
     all_links = net.links
     
-    # Select random host pairs for testing - one pair from different subnets
     host_pairs = []
     
-    # Try to select hosts from different subnets if possible
-    subnet1_hosts = [h for h in all_hosts if h.IP().startswith('10.0.1')]
-    subnet2_hosts = [h for h in all_hosts if h.IP().startswith('10.0.2')]
+    for i in range(0, 10, 2):
+        host_pairs.append((net.get('h{0}'.format(i + 1)), net.get('h{0}'.format(10 - i))))
     
-    if subnet1_hosts and subnet2_hosts:
-        h1 = random.choice(subnet1_hosts)
-        h2 = random.choice(subnet2_hosts)
-        host_pairs.append((h1, h2))
-    else:
-        # Fallback if subnet identification fails
-        if len(all_hosts) >= 2:
-            hosts_sample = random.sample(all_hosts, 2)
-            host_pairs.append((hosts_sample[0], hosts_sample[1]))
-    
-    # Select two more random pairs
-    remaining_hosts = [h for h in all_hosts if not any(h in pair for pair in host_pairs)]
-    for _ in range(min(2, len(remaining_hosts) // 2)):
-        if len(remaining_hosts) >= 2:
-            h1 = remaining_hosts.pop(random.randrange(len(remaining_hosts)))
-            h2 = remaining_hosts.pop(random.randrange(len(remaining_hosts)))
-            host_pairs.append((h1, h2))
-    
-    # Run baseline tests
     print("*** Running baseline performance tests")
     baseline_results = {}
     
@@ -234,9 +205,8 @@ def test_fault_tolerance(net, num_failures=1):
         
         # Test connectivity
         ping_result = source.cmd('ping -c 3 -W 1 {0}'.format(dest.IP()))
-        connectivity = '0% packet loss' in ping_result
+        connectivity = not ('100% packet loss' in ping_result)
         
-        # Extract latency
         latency = "N/A"
         for line in ping_result.split('\n'):
             if 'min/avg/max' in line:
@@ -250,28 +220,27 @@ def test_fault_tolerance(net, num_failures=1):
         
         bandwidth = "N/A"
         for line in bandwidth_result.split('\n'):
-            if 'Mbits/sec' in line and '0.0-' in line:
-                bandwidth = line.split('Mbits/sec')[0].split()[-1] + " Mbits/sec"
+            if 'Mbits/sec' in line:
+                bandwidth = float(line.split('Mbits/sec')[0].split()[-1])
+                break
+            elif 'Gbits/sec' in line:
+                bandwidth = float(line.split('Gbits/sec')[0].split()[-1]) * 1000 
+                break
         
-        # Get traceroute path
-        traceroute = source.cmd('traceroute -n -w 1 -q 1 {0}'.format(dest.IP()))
         
         baseline_results[i] = {
             'connectivity': connectivity,
             'latency': latency,
             'bandwidth': bandwidth,
-            'traceroute': traceroute
         }
     
     # Function to fail links and test impact
     def test_with_failed_links(links_to_fail):
-        # Disable the selected links
         for link in links_to_fail:
             src, dst = link.intf1.node, link.intf2.node
             print("*** Failing link between {0} and {1}".format(
                 src.name, dst.name))
             
-            # Bring down both interfaces
             src.cmd('ifconfig {0} down'.format(link.intf1.name))
             dst.cmd('ifconfig {0} down'.format(link.intf2.name))
         
@@ -307,38 +276,25 @@ def test_fault_tolerance(net, num_failures=1):
                 for line in bandwidth_result.split('\n'):
                     if 'Mbits/sec' in line and '0.0-' in line:
                         bandwidth = line.split('Mbits/sec')[0].split()[-1] + " Mbits/sec"
-            
-            # Get new traceroute path if still connected
-            traceroute = "N/A"
-            if connectivity:
-                traceroute = source.cmd('traceroute -n -w 1 -q 1 {0}'.format(dest.IP()))
+                  
             
             failure_results[i] = {
                 'connectivity': connectivity,
                 'latency': latency,
-                'bandwidth': bandwidth,
-                'traceroute': traceroute
+                'bandwidth': bandwidth
             }
         
         return failure_results
     
-    # Get links between routers (or other links if no router links exist)
     router_links = [link for link in all_links 
                    if (hasattr(link.intf1.node, 'name') and 
                        hasattr(link.intf2.node, 'name') and
                        link.intf1.node.name.startswith('r') and 
                        link.intf2.node.name.startswith('r'))]
-    
-    # If no router links, fall back to any links
     links_to_test = router_links if router_links else all_links
-    
-    # Ensure we don't try to fail more links than exist
     num_failures = min(num_failures, len(links_to_test))
     
-    # Select random links to fail
     failed_links = random.sample(links_to_test, num_failures)
-    
-    # Test with failed links
     failure_results = test_with_failed_links(failed_links)
     
     # Restore network
@@ -348,7 +304,6 @@ def test_fault_tolerance(net, num_failures=1):
         src.cmd('ifconfig {0} up'.format(link.intf1.name))
         dst.cmd('ifconfig {0} up'.format(link.intf2.name))
     
-    # Wait for network to recover
     print("*** Waiting for network to recover")
     time.sleep(5)
     
@@ -370,7 +325,6 @@ def test_fault_tolerance(net, num_failures=1):
         print("  Connectivity after failure: {0}".format("YES" if failure['connectivity'] else "NO"))
         
         if baseline['connectivity'] and failure['connectivity']:
-            # Calculate latency change if both are available
             try:
                 baseline_latency = float(baseline['latency'].split()[0])
                 failure_latency = float(failure['latency'].split()[0])
@@ -382,7 +336,6 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Latency before: {0}".format(baseline['latency']))
                 print("  Latency after: {0}".format(failure['latency']))
             
-            # Calculate bandwidth change if both are available
             try:
                 baseline_bw = float(baseline['bandwidth'].split()[0])
                 failure_bw = float(failure['bandwidth'].split()[0])
@@ -393,20 +346,7 @@ def test_fault_tolerance(net, num_failures=1):
             except (ValueError, IndexError):
                 print("  Bandwidth before: {0}".format(baseline['bandwidth']))
                 print("  Bandwidth after: {0}".format(failure['bandwidth']))
-            
-            # Compare traceroutes if both are available
-            if baseline['traceroute'] != "N/A" and failure['traceroute'] != "N/A":
-                print("  Path before failure:")
-                for line in baseline['traceroute'].split('\n'):
-                    if line.strip() and not line.startswith('traceroute'):
-                        print("    {0}".format(line))
-                
-                print("  Path after failure:")
-                for line in failure['traceroute'].split('\n'):
-                    if line.strip() and not line.startswith('traceroute'):
-                        print("    {0}".format(line))
-        
-        # Overall resilience assessment
+
         if not baseline['connectivity']:
             print("  ASSESSMENT: Pair was disconnected before link failure")
         elif not failure['connectivity']:
@@ -435,8 +375,7 @@ def run_all_tests():
         print('*** Waiting for network to stabilize\n')
         time.sleep(2)
         
-        # Dump connections for debugging
-        print('*** Dumping host connections\n')
+        print('*** printing host connections\n')
         dumpNodeConnections(net.hosts)
         
         # Run tests
