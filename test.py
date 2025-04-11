@@ -66,20 +66,12 @@ def test_connectivity(net):
     print(" Average Latency: {0:.2f} ms".format(avg_latency))
     print(" Average Bandwidth: {0:.2f} Mbits/sec".format(avg_bandwidth))
 
-def test_simultaneous_traffic(net, num_pairs=3, duration=10):  
+def test_simultaneous_traffic(net, duration=10):  
     print("\n*** Testing simultaneous network traffic\n")
     
-    all_hosts = [h for h in net.hosts if h.name.startswith('h')]
-    
     host_pairs = []
-    hosts_copy = all_hosts[:] 
-    random.shuffle(hosts_copy)
-    
-    for i in range(num_pairs):
-        if len(hosts_copy) >= 2:
-            source = hosts_copy.pop()
-            dest = hosts_copy.pop()
-            host_pairs.append((source, dest))
+    for i in range(0, 10, 2):
+        host_pairs.append((net.get('h{0}'.format(i + 1)), net.get('h{0}'.format(10 - i))))
     
     for _, dest in host_pairs:
         dest.cmd('iperf -s &')
@@ -187,8 +179,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
 
 def test_fault_tolerance(net, num_failures=1):
     print("\n*** Testing network fault tolerance with {0} link failure(s) ***\n".format(num_failures))
-    
-    all_hosts = [h for h in net.hosts if h.name.startswith('h')]
+
     all_links = net.links
     
     host_pairs = []
@@ -244,11 +235,9 @@ def test_fault_tolerance(net, num_failures=1):
             src.cmd('ifconfig {0} down'.format(link.intf1.name))
             dst.cmd('ifconfig {0} down'.format(link.intf2.name))
         
-        # Wait for routing protocols to converge
         print("*** Waiting for network to reconverge")
         time.sleep(5)
         
-        # Run tests with failed links
         failure_results = {}
         
         for i, (source, dest) in enumerate(host_pairs):
@@ -257,9 +246,8 @@ def test_fault_tolerance(net, num_failures=1):
             
             # Test connectivity
             ping_result = source.cmd('ping -c 3 -W 1 {0}'.format(dest.IP()))
-            connectivity = '0% packet loss' in ping_result
+            connectivity = not ('100% packet loss' in ping_result)
             
-            # Extract latency
             latency = "N/A"
             for line in ping_result.split('\n'):
                 if 'min/avg/max' in line:
@@ -310,7 +298,6 @@ def test_fault_tolerance(net, num_failures=1):
     print("*** Waiting for network to recover")
     time.sleep(5)
     
-    # Create a string representation of failed links
     failed_links_str = ", ".join(["{0}-{1}".format(link.intf1.node.name, link.intf2.node.name) 
                                 for link in failed_links])
     
@@ -340,7 +327,6 @@ def test_fault_tolerance(net, num_failures=1):
                 print("  Latency after: {0}".format(failure['latency']))
             
             try:
-                # Make sure both are float values before calculation
                 baseline_bw = float(baseline['bandwidth']) if isinstance(baseline['bandwidth'], str) else baseline['bandwidth']
                 failure_bw = float(failure['bandwidth']) if isinstance(failure['bandwidth'], str) else failure['bandwidth']
                 
@@ -366,9 +352,9 @@ def test_fault_tolerance(net, num_failures=1):
                 failure_latency = float(failure['latency'].split()[0])
                 latency_change = ((failure_latency - baseline_latency) / baseline_latency) * 100
                 
-                if latency_change > 100:  # More than doubled
+                if latency_change > 100:  
                     print("  ASSESSMENT: DEGRADED - Significant performance impact")
-                elif latency_change > 20:  # More than 20% increase
+                elif latency_change > 20: 
                     print("  ASSESSMENT: AFFECTED - Noticeable performance impact")
                 else:
                     print("  ASSESSMENT: RESILIENT - Minimal performance impact")
