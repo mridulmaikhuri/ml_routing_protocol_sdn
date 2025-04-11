@@ -120,7 +120,7 @@ def test_simultaneous_traffic(net, num_pairs=3, duration=10):
         source.cmd('rm /tmp/ping_results_{0}'.format(pair_id))
         
         avg_latency = "Unknown"
-        packet_loss = 100.0
+        packet_loss = "Unknown"
         
         for line in ping_result.split('\n'):
             if 'min/avg/max' in line:
