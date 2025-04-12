@@ -42,13 +42,13 @@ def topology():
     print('*** Setting up gateway IPs for the controller to manage')
     for i in range(num):
         # No actual IP configuration here - the controller will handle it
-        print(f"Switch s{i+1} will act as gateway for subnet 10.0.{i+1}.0/24")
+        print("Switch s{0} will act as gateway for subnet 10.0.{1}.0/24".format(i+1, i+1))
 
     # Create mesh topology by connecting all switches to each other
     print('*** Creating mesh links between switches')
     for i in range(num):
         for j in range(i+1, num):
-            print(f"Creating link between s{i+1} and s{j+1}")
+            print("Creating link between s{0} and s{1}".format(i+1, j+1))
             net.addLink(switches[i], switches[j])
 
     # Start network
@@ -71,8 +71,8 @@ def topology():
                 # Create a fake MAC address for gateway
                 gateway_mac = '00:00:00:00:{0:02x}:01'.format(i+1)
                 gateway_ip = '10.0.{0}.1'.format(i+1)
-                hosts[host_index].cmd(f'arp -s {gateway_ip} {gateway_mac}')
-                print(f"Added static ARP for {hosts[host_index].name}: {gateway_ip} -> {gateway_mac}")
+                hosts[host_index].cmd('arp -s {0} {1}'.format(gateway_ip, gateway_mac))
+                print("Added static ARP for {0}: {1} -> {2}".format(hosts[host_index].name, gateway_ip, gateway_mac))
 
     # Add static routes for cross-subnet communication
     print('*** Adding static routes for cross-subnet communication')
@@ -80,8 +80,8 @@ def topology():
         host_subnet = i // 2 + 1
         for target_subnet in range(1, num+1):
             if target_subnet != host_subnet:
-                host.cmd(f'route add -net 10.0.{target_subnet}.0/24 gw 10.0.{host_subnet}.1')
-                print(f"Added route on {host.name}: 10.0.{target_subnet}.0/24 via 10.0.{host_subnet}.1")
+                host.cmd('route add -net 10.0.{0}.0/24 gw 10.0.{1}.1'.format(target_subnet, host_subnet))
+                print("Added route on {0}: 10.0.{1}.0/24 via 10.0.{2}.1".format(host.name, target_subnet, host_subnet))
 
     return net
 
