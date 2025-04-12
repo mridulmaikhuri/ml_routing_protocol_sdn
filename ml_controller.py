@@ -56,11 +56,11 @@ class MLController(app_manager.RyuApp):
                 with open(self.model_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                logger.error(f"Model load error: {e}")
+                logger.error("Model load error: {0}".format(e))
         
         logger.info("Creating new RandomForest model")
         return RandomForestClassifier(n_estimators=100, random_state=42)
-
+    
     def _monitor_network(self):
         while True:
             self._request_stats()
@@ -118,13 +118,13 @@ class MLController(app_manager.RyuApp):
         arp_pkt = pkt.get_protocol(arp.arp)
         if arp_pkt and arp_pkt.opcode == arp.ARP_REPLY:
             self.arp_table[arp_pkt.src_ip] = arp_pkt.src_mac
-            logger.info(f"Learned ARP: {arp_pkt.src_ip} -> {arp_pkt.src_mac}")
+            logger.info("Learned ARP: {0} -> {1}".format(arp_pkt.src_ip, arp_pkt.src_mac))
 
     def _handle_arp_request(self, datapath, in_port, arp_pkt):
         if arp_pkt.dst_ip.startswith('10.0.') and arp_pkt.dst_ip.endswith('.1'):
-        # This is a request for a gateway IP
+            # This is a request for a gateway IP
             subnet = int(arp_pkt.dst_ip.split('.')[2])
-            gateway_mac = self.GATEWAY_MAC_TEMPLATE.format(subnet=subnet)
+            gateway_mac = self.GATEWAY_MAC_TEMPLATE.format(subnet)
             
             # Build ARP reply
             arp_reply = packet.Packet()
@@ -141,7 +141,7 @@ class MLController(app_manager.RyuApp):
             
             # Send packet out
             self._send_packet(datapath, in_port, arp_reply)
-            logger.info(f"Sent ARP reply for {arp_pkt.dst_ip} -> {gateway_mac}")
+            logger.info("Sent ARP reply for {0} -> {1}".format(arp_pkt.dst_ip, gateway_mac))
     
     def _send_packet(self, datapath, in_port, pkt):
         """Utility method to send packets out of a switch"""
@@ -244,7 +244,8 @@ class MLController(app_manager.RyuApp):
                 idle_timeout=30,
                 hard_timeout=60
             )
-            logger.info(f"Installed flow on {current_switch} for {src_ip}->{dst_ip}")
+            logger.info("Installed flow on {0} for {1}->{2}".format(
+                current_switch, src_ip, dst_ip))
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
