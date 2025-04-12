@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER
@@ -9,6 +7,7 @@ from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, ether_types
 from ryu.lib import hub
 from ryu.topology import event
 from ryu.topology.api import get_switch, get_link
+from ryu.cmd import manager
 import networkx as nx
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -60,7 +59,7 @@ class MLController(app_manager.RyuApp):
                 with open(model_path, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                logger.error(f"Error loading model: {e}")
+                logger.error("Error loading model: {0}".format(e))
         
         # Create a new model if no pre-trained model exists
         logger.info("Creating new ML model...")
@@ -140,7 +139,7 @@ class MLController(app_manager.RyuApp):
                             
                             # Update flow rules for the best path
                             if best_path:
-                                logger.info(f"Best path from {src} to {dst}: {best_path}")
+                                logger.info("Best path from {0} to {1}: {2}".format(src, dst, best_path))
                                 # In a real implementation, you'd update flow rules here
                     except nx.NetworkXNoPath:
                         continue
@@ -190,11 +189,11 @@ class MLController(app_manager.RyuApp):
         datapath = ev.datapath
         if ev.state == MAIN_DISPATCHER:
             if datapath.id not in self.datapaths:
-                logger.info(f"Registered datapath: {datapath.id}")
+                logger.info("Registered datapath: {0}".format(datapath.id))
                 self.datapaths[datapath.id] = datapath
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
-                logger.info(f"Unregistered datapath: {datapath.id}")
+                logger.info("Unregistered datapath: {0}".format(datapath.id))
                 del self.datapaths[datapath.id]
     
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -210,7 +209,7 @@ class MLController(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
         
-        logger.info(f"Switch {datapath.id} connected")
+        logger.info("Switch {0} connected".format(datapath.id))
     
     def add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0, hard_timeout=0):
         """Add a flow entry to a datapath"""
@@ -294,7 +293,7 @@ class MLController(app_manager.RyuApp):
                                     out_port = self.mac_to_port[dpid][next_hop]
                                     actions = [parser.OFPActionOutput(out_port)]
                         except Exception as e:
-                            logger.error(f"Error finding ML path: {e}")
+                            logger.error("Error finding ML path: {0}".format(e))
             
             # Add flow with a timeout
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
@@ -331,7 +330,7 @@ class MLController(app_manager.RyuApp):
             # Predict the best path using the ML model
             return self._predict_best_path(path_features)
         except Exception as e:
-            logger.error(f"Error getting ML path: {e}")
+            logger.error("Error getting ML path: {0}".format(e))
             return None
     
     def _install_path_flows(self, path, src_ip, dst_ip):
@@ -375,7 +374,7 @@ class MLController(app_manager.RyuApp):
         if dpid not in self.net:
             self.net.add_node(dpid)
             self.switches.append(dpid)
-            logger.info(f"Switch {dpid} added to topology")
+            logger.info("Switch {0} added to topology".format(dpid))
         
         # Discover links
         self._discover_links()
@@ -390,7 +389,7 @@ class MLController(app_manager.RyuApp):
         if dpid in self.net:
             self.net.remove_node(dpid)
             self.switches.remove(dpid)
-            logger.info(f"Switch {dpid} removed from topology")
+            logger.info("Switch {0} removed from topology".format(dpid))
         
         # Update link information
         self._discover_links()
@@ -421,7 +420,7 @@ class MLController(app_manager.RyuApp):
                 self.bandwidths[(src, dst)] = 100  # Default 100 Mbps
                 self.bandwidths[(dst, src)] = 100
                 
-                logger.info(f"Link added: {src}->{dst} via port {src_port}")
+                logger.info("Link added: {0}->{1} via port {2}".format(src, dst, src_port))
     
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -471,5 +470,4 @@ class MLController(app_manager.RyuApp):
                     break
 
 if __name__ == '__main__':
-    from ryu.cmd import manager
     manager.main(['--ofp-tcp-listen-port', '6633', 'ml_controller'])
