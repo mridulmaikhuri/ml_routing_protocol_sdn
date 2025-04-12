@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER
@@ -38,21 +36,25 @@ class MLController(app_manager.RyuApp):
         self.bandwidths = {}
         self.flow_stats = {}
 
-        # Create a graph for topology representation
         self.net = nx.DiGraph()
-        
-        # Initialize ML model
+
         self.model = self._initialize_ml_model()
         
-        # Start background threads for monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         self.path_update_thread = hub.spawn(self._path_update)
+
+        self.training_data = []
+        self.last_stats = {}
+        self.path_performance = {}
+
+        self.data_file = 'network_training_data.pkl'
+        self._load_training_data()   
+        self.training_thread = hub.spawn(self._periodic_training)
         
         logger.info("ML-based SDN Controller initialized")
 
     def _initialize_ml_model(self):
-        """Initialize the ML model for path selection"""
-        # Try to load a pre-trained model if it exists
+        # Load pre trained model (if it exists)
         model_path = 'ml_routing_model.pkl'
         if os.path.exists(model_path):
             try:
@@ -66,8 +68,6 @@ class MLController(app_manager.RyuApp):
         logger.info("Creating new ML model...")
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         
-        # We'll train this with some initial synthetic data
-        # In a real implementation, you'd train this with actual network data
         X_synthetic = np.array([
             # [bandwidth, delay, packet_loss, hop_count]
             [95, 10, 0.1, 2],
@@ -79,28 +79,24 @@ class MLController(app_manager.RyuApp):
             [50, 22, 0.6, 4],
             [30, 28, 0.8, 5],
         ])
-        
-        # Target is path preference (0: not preferred, 1: preferred)
         y_synthetic = np.array([1, 1, 0, 0, 1, 1, 0, 0])
         
-        # Train the model with synthetic data
         model.fit(X_synthetic, y_synthetic)
         
-        # Save the model
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         
         return model
     
+    # Background thread to monitor network statistics
     def _monitor(self):
-        """Background thread for monitoring network statistics"""
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
             hub.sleep(10)
     
+    # Background thread to update path preferences
     def _path_update(self):
-        """Background thread for updating path preferences based on ML model"""
         while True:
             if self.net.number_of_nodes() > 0:
                 self._update_paths()
