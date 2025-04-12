@@ -42,30 +42,8 @@ class MLController(app_manager.RyuApp):
         
         self.monitor_thread = hub.spawn(self._monitor)
         self.path_update_thread = hub.spawn(self._path_update)
-
-        self.training_data = []
-        self.last_stats = {}
-        self.path_performance = {}
-
-        self.data_file = 'network_training_data.pkl'
-        self._load_training_data()   
-        self.training_thread = hub.spawn(self._periodic_training)
         
         logger.info("ML-based SDN Controller initialized")
-    
-    def _load_training_data(self):
-        """Load training data from file if it exists"""
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, 'rb') as f:
-                    self.training_data = pickle.load(f)
-                logger.info("Loaded training data from {0}".format(self.data_file))
-            except Exception as e:
-                logger.error("Error loading training data: {0}".format(e))
-                self.training_data = []
-        else:
-            logger.info("No existing training data found. Starting fresh.")
-            self.training_data = []
 
     def _initialize_ml_model(self):
         model_path = 'ml_routing_model.pkl'
