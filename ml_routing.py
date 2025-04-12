@@ -7,7 +7,6 @@ from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, ether_types
 from ryu.lib import hub
 from ryu.topology import event
 from ryu.topology.api import get_switch, get_link
-from ryu.cmd import manager
 import networkx as nx
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -37,21 +36,17 @@ class MLController(app_manager.RyuApp):
         self.bandwidths = {}
         self.flow_stats = {}
 
-        # Create a graph for topology representation
         self.net = nx.DiGraph()
         
-        # Initialize ML model
         self.model = self._initialize_ml_model()
         
-        # Start background threads for monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         self.path_update_thread = hub.spawn(self._path_update)
         
         logger.info("ML-based SDN Controller initialized")
 
     def _initialize_ml_model(self):
-        """Initialize the ML model for path selection"""
-        # Try to load a pre-trained model if it exists
+        # Load pre trained model (if it exists)
         model_path = 'ml_routing_model.pkl'
         if os.path.exists(model_path):
             try:
@@ -59,14 +54,12 @@ class MLController(app_manager.RyuApp):
                 with open(model_path, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                logger.error("Error loading model: {0}".format(e))
+                logger.error(f"Error loading model: {e}")
         
         # Create a new model if no pre-trained model exists
         logger.info("Creating new ML model...")
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         
-        # We'll train this with some initial synthetic data
-        # In a real implementation, you'd train this with actual network data
         X_synthetic = np.array([
             # [bandwidth, delay, packet_loss, hop_count]
             [95, 10, 0.1, 2],
@@ -139,7 +132,7 @@ class MLController(app_manager.RyuApp):
                             
                             # Update flow rules for the best path
                             if best_path:
-                                logger.info("Best path from {0} to {1}: {2}".format(src, dst, best_path))
+                                logger.info(f"Best path from {src} to {dst}: {best_path}")
                                 # In a real implementation, you'd update flow rules here
                     except nx.NetworkXNoPath:
                         continue
@@ -189,11 +182,11 @@ class MLController(app_manager.RyuApp):
         datapath = ev.datapath
         if ev.state == MAIN_DISPATCHER:
             if datapath.id not in self.datapaths:
-                logger.info("Registered datapath: {0}".format(datapath.id))
+                logger.info(f"Registered datapath: {datapath.id}")
                 self.datapaths[datapath.id] = datapath
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
-                logger.info("Unregistered datapath: {0}".format(datapath.id))
+                logger.info(f"Unregistered datapath: {datapath.id}")
                 del self.datapaths[datapath.id]
     
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -209,7 +202,7 @@ class MLController(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
         
-        logger.info("Switch {0} connected".format(datapath.id))
+        logger.info(f"Switch {datapath.id} connected")
     
     def add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0, hard_timeout=0):
         """Add a flow entry to a datapath"""
@@ -293,7 +286,7 @@ class MLController(app_manager.RyuApp):
                                     out_port = self.mac_to_port[dpid][next_hop]
                                     actions = [parser.OFPActionOutput(out_port)]
                         except Exception as e:
-                            logger.error("Error finding ML path: {0}".format(e))
+                            logger.error(f"Error finding ML path: {e}")
             
             # Add flow with a timeout
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
@@ -330,7 +323,7 @@ class MLController(app_manager.RyuApp):
             # Predict the best path using the ML model
             return self._predict_best_path(path_features)
         except Exception as e:
-            logger.error("Error getting ML path: {0}".format(e))
+            logger.error(f"Error getting ML path: {e}")
             return None
     
     def _install_path_flows(self, path, src_ip, dst_ip):
@@ -374,7 +367,7 @@ class MLController(app_manager.RyuApp):
         if dpid not in self.net:
             self.net.add_node(dpid)
             self.switches.append(dpid)
-            logger.info("Switch {0} added to topology".format(dpid))
+            logger.info(f"Switch {dpid} added to topology")
         
         # Discover links
         self._discover_links()
@@ -389,7 +382,7 @@ class MLController(app_manager.RyuApp):
         if dpid in self.net:
             self.net.remove_node(dpid)
             self.switches.remove(dpid)
-            logger.info("Switch {0} removed from topology".format(dpid))
+            logger.info(f"Switch {dpid} removed from topology")
         
         # Update link information
         self._discover_links()
@@ -420,7 +413,7 @@ class MLController(app_manager.RyuApp):
                 self.bandwidths[(src, dst)] = 100  # Default 100 Mbps
                 self.bandwidths[(dst, src)] = 100
                 
-                logger.info("Link added: {0}->{1} via port {2}".format(src, dst, src_port))
+                logger.info(f"Link added: {src}->{dst} via port {src_port}")
     
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -470,4 +463,5 @@ class MLController(app_manager.RyuApp):
                     break
 
 if __name__ == '__main__':
+    from ryu.cmd import manager
     manager.main(['--ofp-tcp-listen-port', '6633', 'ml_controller'])
