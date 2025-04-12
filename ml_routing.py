@@ -201,7 +201,7 @@ class MLController(app_manager.RyuApp):
             ]
             return actions
         except Exception as e:
-            logger.error(f"Error in inter-subnet routing: {e}")
+            logger.error("Error in inter-subnet routing: {0}".format(e))
             return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
 
     def _install_l3_path_flows(self, path, src_ip, dst_ip, dst_mac):
