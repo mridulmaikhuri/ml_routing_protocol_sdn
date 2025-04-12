@@ -378,7 +378,7 @@ def run_all_tests():
         
           
         test_connectivity(net)
-        test_simultaneous_traffic(net, num_pairs=3, duration=10)
+        test_simultaneous_traffic(net, duration=10)
         test_fault_tolerance(net, num_failures=2)
         
     except Exception as e:
