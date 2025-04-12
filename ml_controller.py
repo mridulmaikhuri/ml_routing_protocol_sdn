@@ -11,7 +11,7 @@ from ryu.lib.packet import ether_types
 import networkx as nx
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.cross_validation import train_test_split
 import pickle
 import os
 import time
