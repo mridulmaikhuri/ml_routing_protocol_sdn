@@ -91,7 +91,7 @@ def topology():
 
     return net
 
-if name == 'main':
+if __name__ == '__main__':
     setLogLevel('info')  
     net = topology()
     CLI(net)
