@@ -1,625 +1,342 @@
-#!/usr/bin/env python3
-# ML-based Ryu Controller for Mininet Topology
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ether_types, ipv4, arp
+from ryu.lib.packet import packet, ethernet, ipv4, arp
 from ryu.lib import hub
-from ryu.topology import event, switches
+from ryu.topology import event
 from ryu.topology.api import get_switch, get_link
+from ryu.lib.packet import ether_types
 import networkx as nx
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from collections import defaultdict
-import time
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 import pickle
 import os
+import time
+import logging
+import csv
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('MLController')
 
 class MLController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-
+    GATEWAY_MAC_TEMPLATE = "00:00:00:00:{subnet:02x}:01"
+    DEFAULT_BANDWIDTH = 100
+    
     def __init__(self, *args, **kwargs):
         super(MLController, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
-        self.ip_to_mac = {}
-        self.mac_to_dpid = {}
-        self.datapaths = {}
         self.topology_api_app = self
         self.net = nx.DiGraph()
-        self.links = {}
-        self.switches = {}
+        self.datapaths = {}
+        self.mac_to_port = {}
         self.hosts = {}
-        self.gateway_macs = {}
-        self.subnet_to_switch = {}
-        self.model = None
-        self.features_history = []
-        self.link_stats = defaultdict(lambda: {'bytes': 0, 'packets': 0, 'last_bytes': 0, 'last_packets': 0})
-        self.flow_stats = defaultdict(lambda: {'packet_count': 0, 'byte_count': 0, 'duration_sec': 0})
+        self.arp_table = {}
+        self.flow_stats = {}
+        self.port_stats = {}
+        self.bandwidths = {}
+        
+        # ML Configuration
+        self.model_file = 'ml_routing_model.pkl'
+        self.data_file = 'network_data.csv'
+        self.model = self._init_ml_model()
+        self.training_data = []
+        
+        # Start background threads
+        hub.spawn(self._monitor_network)
+        hub.spawn(self._periodic_training)
+        hub.spawn(self._save_data)
 
-        # Configure virtual gateways for each subnet
-        self.setup_virtual_gateways()
+    def _init_ml_model(self):
+        if os.path.exists(self.model_file):
+            try:
+                with open(self.model_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                logger.error(f"Model load error: {e}")
+        
+        logger.info("Creating new RandomForest model")
+        return RandomForestClassifier(n_estimators=100, random_state=42)
 
-        # Start monitoring threads
-        self.monitor_thread = hub.spawn(self._monitor)
-        self.ml_thread = hub.spawn(self._ml_process)
+    def _monitor_network(self):
+        while True:
+            self._request_stats()
+            hub.sleep(10)
 
-        # Try to load pre-trained model if exists
-        self.load_model()
+    def _request_stats(self):
+        for dp in self.datapaths.values():
+            self._request_flow_stats(dp)
+            self._request_port_stats(dp)
 
-    def setup_virtual_gateways(self):
-        # Set up virtual gateway MAC and IP addresses for each subnet
-        num_subnets = 5
-        for i in range(1, num_subnets + 1):
-            gateway_mac = '00:00:00:00:{:02x}:01'.format(i)
-            gateway_ip = '10.0.{}.1'.format(i)
-            self.gateway_macs[gateway_ip] = gateway_mac
-            self.subnet_to_switch['10.0.{}.0/24'.format(i)] = i
-
-    def load_model(self):
-        try:
-            if os.path.exists('ml_routing_model.pkl'):
-                with open('ml_routing_model.pkl', 'rb') as f:
-                    self.model = pickle.load(f)
-                self.logger.info("Loaded pre-trained ML model")
-            else:
-                self.logger.info("No pre-trained model found, will train a new one")
-                self.model = RandomForestRegressor(n_estimators=100, random_state=42)
-        except Exception as e:
-            self.logger.error("Error loading model: {}".format(e))
-            self.model = RandomForestRegressor(n_estimators=100, random_state=42)
-
-    def save_model(self):
-        try:
-            with open('ml_routing_model.pkl', 'wb') as f:
-                pickle.dump(self.model, f)
-            self.logger.info("Saved ML model")
-        except Exception as e:
-            self.logger.error("Error saving model: {}".format(e))
-    
-    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
-    def _state_change_handler(self, ev):
-        datapath = ev.datapath
-        if ev.state == MAIN_DISPATCHER:
-            if datapath.id not in self.datapaths:
-                self.logger.info('Register datapath: {:016x}'.format(datapath.id))
-                self.datapaths[datapath.id] = datapath
-        elif ev.state == DEAD_DISPATCHER:
-            if datapath.id in self.datapaths:
-                self.logger.info('Unregister datapath: {:016x}'.format(datapath.id))
-                del self.datapaths[datapath.id]
-
-    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
-    def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
+    def _request_flow_stats(self, datapath):
+        ofp = datapath.ofproto
         parser = datapath.ofproto_parser
+        req = parser.OFPFlowStatsRequest(datapath)
+        datapath.send_msg(req)
 
-        match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
-        self.install_arp_handler(datapath)
-
-    def install_arp_handler(self, datapath):
-        ofproto = datapath.ofproto
+    def _request_port_stats(self, datapath):
+        ofp = datapath.ofproto
         parser = datapath.ofproto_parser
-        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP)
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 1, match, actions)
+        req = parser.OFPPortStatsRequest(datapath, 0, ofp.OFPP_ANY)
+        datapath.send_msg(req)
 
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0, hard_timeout=0):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        if buffer_id:
-            mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
-                                    priority=priority, match=match,
-                                    instructions=inst, idle_timeout=idle_timeout,
-                                    hard_timeout=hard_timeout)
-        else:
-            mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                    match=match, instructions=inst,
-                                    idle_timeout=idle_timeout, hard_timeout=hard_timeout)
-        datapath.send_msg(mod)
-    
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
         datapath = msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        in_port = msg.match['in_port']
-        dpid = datapath.id
-
         pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-
+        eth = pkt.get_protocol(ethernet.ethernet)
+        
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
         
-        dst_mac = eth.dst
-        src_mac = eth.src
-
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src_mac] = in_port
-        self.mac_to_dpid[src_mac] = dpid
-
+        # Learn MAC addresses
+        self.mac_to_port.setdefault(datapath.id, {})
+        self.mac_to_port[datapath.id][eth.src] = msg.match['in_port']
+        
+        # Handle ARP
         if eth.ethertype == ether_types.ETH_TYPE_ARP:
-            self.handle_arp(datapath, in_port, pkt)
+            self._handle_arp(datapath, msg.in_port, pkt)
             return
-
+            
+        # IP Routing
         if eth.ethertype == ether_types.ETH_TYPE_IP:
-            ip_pkt = pkt.get_protocol(ipv4.ipv4)
-            if ip_pkt:
-                self.handle_ipv4(msg, datapath, in_port, eth, ip_pkt)
-                return
-
-        if dst_mac in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst_mac]
+            self._handle_ip(datapath, msg.in_port, pkt)
+            
+    def _handle_arp(self, datapath, in_port, pkt):
+        arp_pkt = pkt.get_protocol(arp.arp)
+        if arp_pkt.opcode == arp.ARP_REQUEST:
+            self._handle_arp_request(datapath, in_port, arp_pkt)
         else:
-            out_port = ofproto.OFPP_FLOOD
+            self._handle_arp_reply(pkt)
 
-        actions = [parser.OFPActionOutput(out_port)]
-
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst_mac)
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
-                return
-            else:
-                self.add_flow(datapath, 1, match, actions)
-
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
-        datapath.send_msg(out)
-
-    def handle_arp(self, datapath, in_port, pkt):
+    def _handle_arp_reply(self, pkt):
+        """Learn IP-MAC mappings from ARP replies"""
         arp_pkt = pkt.get_protocol(arp.arp)
-        if not arp_pkt:
-            return
+        if arp_pkt and arp_pkt.opcode == arp.ARP_REPLY:
+            self.arp_table[arp_pkt.src_ip] = arp_pkt.src_mac
+            logger.info(f"Learned ARP: {arp_pkt.src_ip} -> {arp_pkt.src_mac}")
 
-        self.ip_to_mac[arp_pkt.src_ip] = arp_pkt.src_mac
-
-        if arp_pkt.opcode == arp.ARP_REQUEST and arp_pkt.dst_ip in self.gateway_macs:
-            self.reply_arp(datapath, in_port, pkt)
-            return
-
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-        dst_mac = eth.dst
-        src_mac = eth.src
-        dpid = datapath.id
-
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src_mac] = in_port
-
-        self.flood_packet(datapath, in_port, pkt)
-
-    def reply_arp(self, datapath, in_port, pkt):
-        eth_pkt = pkt.get_protocols(ethernet.ethernet)[0]
-        arp_pkt = pkt.get_protocol(arp.arp)
-
-        gateway_mac = self.gateway_macs.get(arp_pkt.dst_ip)
-        if not gateway_mac:
-            return
-
-        pkt_arp = packet.Packet()
-        pkt_arp.add_protocol(ethernet.ethernet(
-            ethertype=ether_types.ETH_TYPE_ARP,
-            dst=eth_pkt.src,
-            src=gateway_mac))
-        pkt_arp.add_protocol(arp.arp(
-            opcode=arp.ARP_REPLY,
-            src_mac=gateway_mac,
-            src_ip=arp_pkt.dst_ip,
-            dst_mac=arp_pkt.src_mac,
-            dst_ip=arp_pkt.src_ip))
-
-        self.send_packet(datapath, in_port, pkt_arp)
-
-    def flood_packet(self, datapath, in_port, pkt):
+    def _handle_arp_request(self, datapath, in_port, arp_pkt):
+        if arp_pkt.dst_ip.startswith('10.0.') and arp_pkt.dst_ip.endswith('.1'):
+        # This is a request for a gateway IP
+            subnet = int(arp_pkt.dst_ip.split('.')[2])
+            gateway_mac = self.GATEWAY_MAC_TEMPLATE.format(subnet=subnet)
+            
+            # Build ARP reply
+            arp_reply = packet.Packet()
+            arp_reply.add_protocol(ethernet.ethernet(
+                ethertype=ether_types.ETH_TYPE_ARP,
+                dst=arp_pkt.src_mac,
+                src=gateway_mac))
+            arp_reply.add_protocol(arp.arp(
+                opcode=arp.ARP_REPLY,
+                src_mac=gateway_mac,
+                src_ip=arp_pkt.dst_ip,
+                dst_mac=arp_pkt.src_mac,
+                dst_ip=arp_pkt.src_ip))
+            
+            # Send packet out
+            self._send_packet(datapath, in_port, arp_reply)
+            logger.info(f"Sent ARP reply for {arp_pkt.dst_ip} -> {gateway_mac}")
+    
+    def _send_packet(self, datapath, in_port, pkt):
+        """Utility method to send packets out of a switch"""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-
-        data = None
-        if isinstance(pkt, packet.Packet):
-            data = pkt.data
-        else:
-            data = pkt
-
+        pkt.serialize()
+        
         actions = [parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
         out = parser.OFPPacketOut(
             datapath=datapath,
             buffer_id=ofproto.OFP_NO_BUFFER,
             in_port=in_port,
             actions=actions,
-            data=data)
+            data=pkt.data
+        )
         datapath.send_msg(out)
 
-    def send_packet(self, datapath, port, pkt):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        pkt.serialize()
-        data = pkt.data
-        actions = [parser.OFPActionOutput(port=port)]
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=ofproto.OFP_NO_BUFFER,
-            in_port=ofproto.OFPP_CONTROLLER,
-            actions=actions,
-            data=data)
-        datapath.send_msg(out)
-
-    def handle_ipv4(self, msg, datapath, in_port, eth, ip_pkt):
-        dpid = datapath.id
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        src_subnet = self.get_subnet(ip_pkt.src)
-        dst_subnet = self.get_subnet(ip_pkt.dst)
-
+    def _handle_ip(self, datapath, in_port, pkt):
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        
+        # Check for inter-subnet routing
+        src_subnet = '.'.join(ip_pkt.src.split('.')[:3])
+        dst_subnet = '.'.join(ip_pkt.dst.split('.')[:3])
+        
         if src_subnet != dst_subnet:
-            if dst_subnet in self.subnet_to_switch:
-                dst_switch = self.subnet_to_switch[dst_subnet]
-                path = self.get_optimal_path(dpid, dst_switch)
-
-                if path and len(path) > 1:
-                    self.install_path_flows(msg, path, eth, ip_pkt)
-                    return
-
-        if eth.dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][eth.dst]
+            self._handle_inter_subnet(datapath, in_port, eth_pkt, ip_pkt)
         else:
-            out_port = ofproto.OFPP_FLOOD
+            self._handle_intra_subnet(datapath, in_port, eth_pkt, ip_pkt)
 
-        actions = [parser.OFPActionOutput(out_port)]
-
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(
-                in_port=in_port,
-                eth_type=ether_types.ETH_TYPE_IP,
-                ipv4_src=ip_pkt.src,
-                ipv4_dst=ip_pkt.dst)
-
-            self.add_flow(datapath, 1, match, actions,
-                          idle_timeout=60, hard_timeout=300)
-
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=data)
-        datapath.send_msg(out)
-
-    def get_subnet(self, ip):
-        octets = ip.split('.')
-        if len(octets) == 4:
-            return "10.0.{}.0/24".format(octets[2])
-        return None
-
-    def get_optimal_path(self, src_dpid, dst_dpid):
-        if not self.net.has_node(src_dpid) or not self.net.has_node(dst_dpid):
-            return None
-
-        if not self.model or len(self.features_history) < 50:
-            try:
-                path = nx.shortest_path(self.net, src_dpid, dst_dpid)
-                return path
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                return None
-
+    def _handle_inter_subnet(self, datapath, in_port, eth_pkt, ip_pkt):
+        # ML-based routing between subnets
         try:
-            paths = list(nx.all_simple_paths(self.net, src_dpid, dst_dpid, cutoff=5))
-
-            if not paths:
-                return None
-
-            best_path = None
-            best_score = float('inf')
-
-            for path in paths:
-                path_features = self.extract_path_features(path)
-                predicted_delay = self.model.predict([path_features])[0]
-
-                if predicted_delay < best_score:
-                    best_score = predicted_delay
-                    best_path = path
-
-            return best_path
-
+            path = self._get_ml_path(ip_pkt.src, ip_pkt.dst)
+            if path:
+                self._install_path_flows(path, ip_pkt.src, ip_pkt.dst)
         except Exception as e:
-            self.logger.error("Error in get_optimal_path: {}".format(e))
-            try:
-                return nx.shortest_path(self.net, src_dpid, dst_dpid)
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                return None
+            logger.error(f"Routing error: {e}")
 
-    def extract_path_features(self, path):
-        features = []
-        features.append(len(path) - 1)
+    def _get_ml_path(self, src_ip, dst_ip):
+        # Get all possible paths
+        paths = nx.all_simple_paths(self.net, src_ip, dst_ip)
+        
+        # Extract features and predict
+        features = [self._extract_features(path) for path in paths]
+        if not features:
+            return None
+            
+        predictions = self.model.predict_proba(features)
+        return paths[np.argmax(predictions[:, 1])]
 
-        total_bytes = 0
-        total_packets = 0
-        max_utilization = 0
+    def _extract_features(self, path):
+        # Calculate path metrics
+        hop_count = len(path) - 1
+        bandwidth = min(self.bandwidths.get((path[i], path[i+1]), 100) for i in range(len(path)-1))
+        delay = sum(5 for _ in range(hop_count))  # Simplified delay model
+        return [bandwidth, delay, hop_count]
+
+    def _install_path_flows(self, path, src_ip, dst_ip):
+        """Install flow entries along the predicted path"""
+        if len(path) < 2:
+            return
 
         for i in range(len(path) - 1):
-            src = path[i]
-            dst = path[i + 1]
-            link_key = (src, dst)
-
-            if link_key in self.link_stats:
-                stats = self.link_stats[link_key]
-                total_bytes += stats['bytes']
-                total_packets += stats['packets']
-
-                bytes_rate = stats['bytes'] - stats['last_bytes']
-                max_utilization = max(max_utilization, bytes_rate)
-
-        features.append(total_bytes)
-        features.append(total_packets)
-        features.append(max_utilization)
-
-        while len(features) < 10:
-            features.append(0)
-
-        return features[:10]
-
-    def install_path_flows(self, msg, path, eth, ip_pkt):
-        for i in range(len(path) - 1):
-            curr_dpid = path[i]
-            next_dpid = path[i + 1]
-
-            out_port = self.get_port_for_next_hop(curr_dpid, next_dpid)
-            if out_port is None:
+            current_switch = path[i]
+            next_switch = path[i+1]
+            
+            if not isinstance(current_switch, int) or current_switch not in self.datapaths:
                 continue
 
-            datapath = self.datapaths.get(curr_dpid)
-            if datapath is None:
-                continue
-
+            datapath = self.datapaths[current_switch]
             parser = datapath.ofproto_parser
+            ofproto = datapath.ofproto
 
-            match_forward = parser.OFPMatch(
+            # Get output port for next hop
+            out_port = self.net.edges[current_switch, next_switch]['port']
+            
+            # Create match for IP pair
+            match = parser.OFPMatch(
                 eth_type=ether_types.ETH_TYPE_IP,
-                ipv4_src=ip_pkt.src,
-                ipv4_dst=ip_pkt.dst)
-
-            match_reverse = parser.OFPMatch(
-                eth_type=ether_types.ETH_TYPE_IP,
-                ipv4_src=ip_pkt.dst,
-                ipv4_dst=ip_pkt.src)
-
-            actions_forward = [parser.OFPActionOutput(out_port)]
-
-            self.add_flow(datapath, 2, match_forward, actions_forward,
-                          idle_timeout=60, hard_timeout=300)
-
+                ipv4_src=src_ip,
+                ipv4_dst=dst_ip
+            )
+            
+            # Create actions
+            actions = [parser.OFPActionOutput(out_port)]
+            
+            # For last switch, rewrite destination MAC
             if i == len(path) - 2:
-                dst_mac = eth.dst
-                if dst_mac in self.mac_to_port.get(next_dpid, {}):
-                    last_out_port = self.mac_to_port[next_dpid][dst_mac]
-                    next_datapath = self.datapaths.get(next_dpid)
+                dst_mac = self.arp_table.get(dst_ip)
+                if dst_mac:
+                    actions.insert(0, parser.OFPActionSetField(eth_dst=dst_mac))
 
-                    if next_datapath:
-                        next_parser = next_datapath.ofproto_parser
-                        next_actions = [next_parser.OFPActionOutput(last_out_port)]
-
-                        self.add_flow(next_datapath, 2, match_forward, next_actions,
-                                      idle_timeout=60, hard_timeout=300)
-
-            if eth.src in self.mac_to_port.get(path[0], {}):
-                first_in_port = self.mac_to_port[path[0]][eth.src]
-
-                if i == 0:
-                    src_datapath = self.datapaths.get(path[0])
-                    if src_datapath:
-                        src_parser = src_datapath.ofproto_parser
-
-                        src_out_port = self.get_port_for_next_hop(path[0], path[1])
-                        if src_out_port:
-                            actions_reverse = [src_parser.OFPActionOutput(src_out_port)]
-                            self.add_flow(src_datapath, 2, match_reverse, actions_reverse,
-                                          idle_timeout=60, hard_timeout=300)
-
-    def get_port_for_next_hop(self, src_dpid, dst_dpid):
-        for link in self.links.values():
-            if link['src'] == src_dpid and link['dst'] == dst_dpid:
-                return link['src_port']
-        return None
-    
-    @set_ev_cls(event.EventSwitchEnter)
-    def switch_enter_handler(self, ev):
-        switch = ev.switch
-        dpid = switch.dp.id
-        self.switches[dpid] = switch
-        self.logger.info("Switch added: {}".format(dpid))
-        self.update_topology()
-
-    @set_ev_cls(event.EventSwitchLeave)
-    def switch_leave_handler(self, ev):
-        switch = ev.switch
-        dpid = switch.dp.id
-        if dpid in self.switches:
-            del self.switches[dpid]
-        self.logger.info("Switch removed: {}".format(dpid))
-        self.update_topology()
-
-    @set_ev_cls(event.EventLinkAdd)
-    def link_add_handler(self, ev):
-        link = ev.link
-        src_dpid = link.src.dpid
-        dst_dpid = link.dst.dpid
-        src_port = link.src.port_no
-        dst_port = link.dst.port_no
-
-        link_id = "{}-{}".format(src_dpid, dst_dpid)
-        self.links[link_id] = {
-            'src': src_dpid,
-            'dst': dst_dpid,
-            'src_port': src_port,
-            'dst_port': dst_port
-        }
-
-        self.logger.info("Link added: {}".format(link_id))
-        self.update_topology()
-
-    @set_ev_cls(event.EventLinkDelete)
-    def link_delete_handler(self, ev):
-        link = ev.link
-        src_dpid = link.src.dpid
-        dst_dpid = link.dst.dpid
-
-        link_id = "{}-{}".format(src_dpid, dst_dpid)
-        if link_id in self.links:
-            del self.links[link_id]
-
-        self.logger.info("Link removed: {}".format(link_id))
-        self.update_topology()
-
-    def update_topology(self):
-        self.net.clear()
-
-        for dpid in self.switches:
-            self.net.add_node(dpid)
-
-        for link_info in self.links.values():
-            src = link_info['src']
-            dst = link_info['dst']
-            self.net.add_edge(src, dst, weight=1)
-
-        self.logger.info("Topology updated: {} nodes, {} edges".format(len(self.net.nodes), len(self.net.edges)))
-
-
-    def _monitor(self):
-        while True:
-            for dp in self.datapaths.values():
-                self._request_stats(dp)
-            hub.sleep(10)
-
-    def _request_stats(self, datapath):
-        self.logger.debug('send stats request: {:016x}'.format(datapath.id))
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        req = parser.OFPFlowStatsRequest(datapath)
-        datapath.send_msg(req)
-
-        req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
-        datapath.send_msg(req)
+            # Install flow with higher priority than default
+            self.add_flow(
+                datapath=datapath,
+                priority=1000,
+                match=match,
+                actions=actions,
+                idle_timeout=30,
+                hard_timeout=60
+            )
+            logger.info(f"Installed flow on {current_switch} for {src_ip}->{dst_ip}")
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
+        """Collect flow statistics for ML features"""
         body = ev.msg.body
         dpid = ev.msg.datapath.id
+        current_time = time.time()
 
         for stat in body:
-            if 'ipv4_src' in stat.match and 'ipv4_dst' in stat.match:
-                key = (dpid, stat.match['ipv4_src'], stat.match['ipv4_dst'])
+            if stat.match.get('ipv4_src') and stat.match.get('ipv4_dst'):
+                key = (stat.match['ipv4_src'], stat.match['ipv4_dst'])
+                
+                # Calculate bandwidth usage
+                if key in self.flow_stats:
+                    prev = self.flow_stats[key]
+                    time_diff = current_time - prev['timestamp']
+                    byte_diff = stat.byte_count - prev['byte_count']
+                    
+                    # Bandwidth in Mbps: (bytes * 8) / (1e6 * seconds)
+                    bandwidth = (byte_diff * 8) / (time_diff * 1e6)
+                    self.training_data.append([
+                        prev['bandwidth'],
+                        prev['delay'],
+                        prev['hop_count'],
+                        bandwidth  # Target variable
+                    ])
+                
+                # Update current stats
                 self.flow_stats[key] = {
-                    'packet_count': stat.packet_count,
                     'byte_count': stat.byte_count,
-                    'duration_sec': stat.duration_sec
+                    'packet_count': stat.packet_count,
+                    'timestamp': current_time,
+                    'bandwidth': self.bandwidths.get(key, DEFAULT_BANDWIDTH),
+                    'delay': len(self._get_ml_path(key[0], key[1])) * 5,  # Simulated delay
+                    'hop_count': len(self._get_ml_path(key[0], key[1]))
                 }
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
+        """Update bandwidth estimates based on port statistics"""
         body = ev.msg.body
         dpid = ev.msg.datapath.id
+        current_time = time.time()
 
         for stat in body:
             port_no = stat.port_no
+            for (src, dst), port in self.net.edges(data='port'):
+                if src == dpid and port == port_no:
+                    # Calculate bandwidth utilization
+                    prev_stats = self.port_stats.get((src, dst), {})
+                    if prev_stats:
+                        time_diff = current_time - prev_stats['timestamp']
+                        byte_diff = stat.tx_bytes - prev_stats['tx_bytes']
+                        bw = (byte_diff * 8) / (time_diff * 1e6)  # Mbps
+                        self.bandwidths[(src, dst)] = max(DEFAULT_BANDWIDTH - bw, 10)
+                    
+                    # Update current stats
+                    self.port_stats[(src, dst)] = {
+                        'tx_bytes': stat.tx_bytes,
+                        'rx_bytes': stat.rx_bytes,
+                        'timestamp': current_time
+                    }
 
-            for link_id, link_info in self.links.items():
-                if link_info['src'] == dpid and link_info['src_port'] == port_no:
-                    dst_dpid = link_info['dst']
-                    link_key = (dpid, dst_dpid)
 
-                    self.link_stats[link_key]['last_bytes'] = self.link_stats[link_key]['bytes']
-                    self.link_stats[link_key]['last_packets'] = self.link_stats[link_key]['packets']
-
-                    self.link_stats[link_key]['bytes'] = stat.tx_bytes
-                    self.link_stats[link_key]['packets'] = stat.tx_packets
-
-                    bytes_rate = self.link_stats[link_key]['bytes'] - self.link_stats[link_key]['last_bytes']
-                    if bytes_rate > 0:
-                        weight = min(10, max(1, 1 + bytes_rate / 1000000))
-                        if self.net.has_edge(dpid, dst_dpid):
-                            self.net[dpid][dst_dpid]['weight'] = weight
-
-    def _ml_process(self):
+    def _periodic_training(self):
         while True:
-            self._gather_training_data()
-
-            if len(self.features_history) >= 50:
+            if len(self.training_data) > 100:
                 self._train_model()
-
-            hub.sleep(60)
-
-    def _gather_training_data(self):
-        for key, flow in self.flow_stats.items():
-            if flow['packet_count'] > 0 and flow['duration_sec'] > 0:
-                dpid, src_ip, dst_ip = key
-
-                src_subnet = self.get_subnet(src_ip)
-                dst_subnet = self.get_subnet(dst_ip)
-
-                if src_subnet in self.subnet_to_switch and dst_subnet in self.subnet_to_switch:
-                    src_switch = self.subnet_to_switch[src_subnet]
-                    dst_switch = self.subnet_to_switch[dst_subnet]
-
-                    try:
-                        path = nx.shortest_path(self.net, src_switch, dst_switch)
-
-                        features = self.extract_path_features(path)
-
-                        if flow['byte_count'] > 0:
-                            delay = flow['duration_sec'] * 1000 / (flow['byte_count'] / 1000)
-                        else:
-                            delay = flow['duration_sec'] * 1000
-
-                        self.features_history.append((features, delay))
-
-                        if len(self.features_history) > 1000:
-                            self.features_history = self.features_history[-1000:]
-
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        pass
+            hub.sleep(300)  # Train every 5 minutes
 
     def _train_model(self):
-        if len(self.features_history) < 50:
-            return
+        # Prepare training data
+        X = np.array([d[:-1] for d in self.training_data])
+        y = np.array([d[-1] for d in self.training_data])
+        
+        # Train/test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+        self.model.fit(X_train, y_train)
+        
+        # Save updated model
+        with open(self.model_file, 'wb') as f:
+            pickle.dump(self.model, f)
 
-        try:
-            X = [features for features, _ in self.features_history]
-            y = [delay for _, delay in self.features_history]
-
-            self.model = RandomForestRegressor(n_estimators=100, random_state=42)
-            self.model.fit(X, y)
-
-            self.save_model()
-
-            self.logger.info("ML model trained with {} samples".format(len(X)))
-
-        except Exception as e:
-            self.logger.error("Error training ML model: {}".format(e))
+    def _save_data(self):
+        while True:
+            if self.training_data:
+                with open(self.data_file, 'a') as f:
+                    writer = csv.writer(f)
+                    writer.writerows(self.training_data)
+                self.training_data = []
+            hub.sleep(60)
 
 if __name__ == '__main__':
-    import sys
-    import os
-    # Add the current directory to the Python path
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    
     from ryu.cmd import manager
-    manager.main(['--ofp-tcp-listen-port', '6633', './ml_controller.py'])
+    manager.main(['ml_controller.py', '--ofp-tcp-listen-port', '6633'])
