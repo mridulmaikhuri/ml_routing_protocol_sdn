@@ -640,4 +640,4 @@ class MLController(app_manager.RyuApp):
 
 if __name__ == '__main__':
     from ryu.cmd import manager
-    manager.main(['--ofp-tcp-listen-port', '6633', 'ml_routing:MLController'])
+    manager.main(['--ofp-tcp-listen-port', '6633', 'ml_routing'])
