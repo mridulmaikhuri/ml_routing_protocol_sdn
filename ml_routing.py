@@ -61,7 +61,7 @@ class MLController(app_manager.RyuApp):
                 with open(model_path, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                logger.error(f"Error loading model: {e}")
+                logger.error("Error loading model: {0}".format(e))
         
         logger.info("Creating new ML model...")
         model = RandomForestClassifier(n_estimators=100, random_state=42)
