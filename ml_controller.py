@@ -616,9 +616,10 @@ class MLController(app_manager.RyuApp):
             self.logger.error("Error training ML model: {}".format(e))
 
 if __name__ == '__main__':
-    import logging
-    logging.basicConfig(level=logging.INFO)
-
+    import sys
+    import os
+    # Add the current directory to the Python path
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    
     from ryu.cmd import manager
-    manager.main(['ryu-manager', 'MLController.py'])
-
+    manager.main(['--ofp-tcp-listen-port', '6633', './ml_controller.py'])
