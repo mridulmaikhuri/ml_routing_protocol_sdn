@@ -54,7 +54,6 @@ class MLController(app_manager.RyuApp):
         logger.info("ML-based SDN Controller initialized")
 
     def _initialize_ml_model(self):
-        # Load pre trained model (if it exists)
         model_path = 'ml_routing_model.pkl'
         if os.path.exists(model_path):
             try:
@@ -64,10 +63,10 @@ class MLController(app_manager.RyuApp):
             except Exception as e:
                 logger.error(f"Error loading model: {e}")
         
-        # Create a new model if no pre-trained model exists
         logger.info("Creating new ML model...")
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         
+        # TODO: Replace synthetic dataset with real dataset
         X_synthetic = np.array([
             # [bandwidth, delay, packet_loss, hop_count]
             [95, 10, 0.1, 2],
@@ -102,8 +101,8 @@ class MLController(app_manager.RyuApp):
                 self._update_paths()
             hub.sleep(30)
     
+    # Request flow and port statistics from a datapath
     def _request_stats(self, datapath):
-        """Request flow and port statistics from a datapath"""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
@@ -114,6 +113,259 @@ class MLController(app_manager.RyuApp):
         # Request port stats
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
+
+        # Add these functions to your existing MLController class
+
+    def _handle_ip_packet(self, datapath, in_port, pkt):
+        """Handle IP packets and perform L3 routing if needed"""
+        eth = pkt.get_protocol(ethernet.ethernet)
+        ip = pkt.get_protocol(ipv4.ipv4)
+        
+        if not ip:
+            return None
+            
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+        
+        src_mac = eth.src
+        dst_mac = eth.dst
+        src_ip = ip.src
+        dst_ip = ip.dst
+        
+        # Check if this is an inter-subnet routing case
+        src_subnet = '.'.join(src_ip.split('.')[:3]) + '.0/24'
+        dst_subnet = '.'.join(dst_ip.split('.')[:3]) + '.0/24'
+        
+        # If same subnet, handle as regular L2 forwarding
+        if src_subnet == dst_subnet:
+            return None
+            
+        # This is an inter-subnet routing case
+        logger.info(f"Inter-subnet routing: {src_ip} -> {dst_ip}")
+        
+        # Check if this packet is sent to a gateway (virtual router)
+        is_to_gateway = False
+        for i in range(1, 6):  # We have 5 subnets in our topology
+            gateway_mac = f"00:00:00:00:{i:02x}:01"
+            if dst_mac == gateway_mac:
+                is_to_gateway = True
+                break
+                
+        if not is_to_gateway:
+            return None
+            
+        # Find the destination host in our network
+        dst_host = None
+        for host_mac, host_info in self.hosts.items():
+            if host_info.get('ip') == dst_ip:
+                dst_host = host_mac
+                break
+                
+        if not dst_host:
+            # We don't know the destination host yet
+            # Flood to find it or use ARP, depending on your strategy
+            return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
+            
+        # We know the destination host, find the path
+        try:
+            # Use ML to determine the best path to the destination switch
+            dst_switch = None
+            for switch_id, mac_port in self.mac_to_port.items():
+                if dst_host in mac_port:
+                    dst_switch = switch_id
+                    break
+                    
+            if not dst_switch:
+                return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
+                
+            # Get ML-optimized path
+            path = self._get_ml_path(dpid, dst_switch)
+            
+            if not path or len(path) < 2:
+                return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
+                
+            # Install flow entries along the path
+            self._install_l3_path_flows(path, src_ip, dst_ip, dst_host)
+            
+            # Determine output port for next hop
+            next_hop = path[1]
+            out_port = self.mac_to_port[dpid].get(next_hop)
+            if not out_port:
+                return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
+                
+            # Rewrite the destination MAC to the final host's MAC
+            actions = [
+                parser.OFPActionSetField(eth_dst=dst_host),
+                parser.OFPActionOutput(out_port)
+            ]
+            return actions
+        except Exception as e:
+            logger.error(f"Error in inter-subnet routing: {e}")
+            return parser.OFPActionOutput(ofproto.OFPP_FLOOD)
+
+    def _install_l3_path_flows(self, path, src_ip, dst_ip, dst_mac):
+        """Install flow rules for L3 routing along a path"""
+        if len(path) < 2:
+            return
+            
+        # Install flows for each switch in the path
+        for i in range(len(path) - 1):
+            if not isinstance(path[i], int):  # Skip non-switch nodes
+                continue
+                
+            datapath = self.datapaths.get(path[i])
+            if not datapath:
+                continue
+                
+            # Get the output port for the next hop
+            out_port = None
+            for next_hop in self.mac_to_port.get(path[i], {}):
+                if next_hop == path[i+1]:
+                    out_port = self.mac_to_port[path[i]][next_hop]
+                    break
+            
+            if not out_port:
+                continue
+                
+            # For the last switch in the path, rewrite the MAC
+            if i == len(path) - 2:
+                parser = datapath.ofproto_parser
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP,
+                                    ipv4_src=src_ip, ipv4_dst=dst_ip)
+                actions = [
+                    parser.OFPActionSetField(eth_dst=dst_mac),
+                    parser.OFPActionOutput(out_port)
+                ]
+                self.add_flow(datapath, 3, match, actions, idle_timeout=30)
+            else:
+                # Regular forwarding for intermediate switches
+                parser = datapath.ofproto_parser
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP,
+                                    ipv4_src=src_ip, ipv4_dst=dst_ip)
+                actions = [parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 2, match, actions, idle_timeout=30)
+
+    # Modify your packet_in_handler to include L3 routing
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
+        """Handle packet in events"""
+        msg = ev.msg
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
+        
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        
+        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            # Ignore LLDP packets
+            return
+        
+        dst = eth.dst
+        src = eth.src
+        dpid = datapath.id
+        
+        # Learn MAC address to avoid flooding next time
+        self.mac_to_port.setdefault(dpid, {})
+        self.mac_to_port[dpid][src] = in_port
+        
+        # Store host information
+        if src not in self.hosts and not self._is_multicast(src):
+            self.hosts[src] = {
+                'dpid': dpid,
+                'port': in_port
+            }
+            # Try to get IP if this is an IP packet
+            ip_pkt = pkt.get_protocol(ipv4.ipv4)
+            if ip_pkt:
+                self.hosts[src]['ip'] = ip_pkt.src
+        
+        # Update topology if needed
+        if src not in self.net:
+            self.net.add_node(src)
+            self.net.add_edge(dpid, src, port=in_port)
+            self.net.add_edge(src, dpid)
+        
+        # Handle IP packet for L3 routing if needed
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            actions = self._handle_ip_packet(datapath, in_port, pkt)
+            if actions:
+                # If we got specific actions from L3 handler, use them
+                if isinstance(actions, list):
+                    # Install a flow
+                    if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                        match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
+                        self.add_flow(datapath, 1, match, actions, msg.buffer_id, idle_timeout=20)
+                    else:
+                        match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
+                        self.add_flow(datapath, 1, match, actions, idle_timeout=20)
+                    
+                    # Send packet out
+                    data = None
+                    if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                        data = msg.data
+                    
+                    out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                        in_port=in_port, actions=actions, data=data)
+                    datapath.send_msg(out)
+                    return
+        
+        # Continue with normal L2 forwarding
+        # Check if we know the destination MAC
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            out_port = ofproto.OFPP_FLOOD
+        
+        actions = [parser.OFPActionOutput(out_port)]
+        
+        # Install a flow to avoid packet_in next time
+        if out_port != ofproto.OFPP_FLOOD:
+            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+            
+            # IP packet with ML-based routing
+            if eth.ethertype == ether_types.ETH_TYPE_IP:
+                ip = pkt.get_protocol(ipv4.ipv4)
+                if ip:
+                    # Use ML-based routing for IP packets within same subnet
+                    src_ip = ip.src
+                    dst_ip = ip.dst
+                    
+                    # Find the best path using our ML model
+                    if src in self.net and dst in self.net:
+                        try:
+                            path = self._get_ml_path(src, dst)
+                            if path and len(path) > 1:
+                                # Update path in the network
+                                self._install_path_flows(path, src_ip, dst_ip)
+                                # Set the output port to the next hop
+                                next_hop = path[1]
+                                if next_hop in self.mac_to_port[dpid]:
+                                    out_port = self.mac_to_port[dpid][next_hop]
+                                    actions = [parser.OFPActionOutput(out_port)]
+                        except Exception as e:
+                            logger.error(f"Error finding ML path: {e}")
+            
+            # Add flow with a timeout
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id, idle_timeout=20)
+            else:
+                self.add_flow(datapath, 1, match, actions, idle_timeout=20)
+        
+        # Send packet out
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
+        
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                in_port=in_port, actions=actions, data=data)
+        datapath.send_msg(out)
+
+    def _is_multicast(self, mac):
+        """Check if a MAC address is multicast/broadcast"""
+        return int(mac.split(':')[0], 16) & 1
     
     def _update_paths(self):
         """Update path preferences based on ML model predictions"""
@@ -226,86 +478,6 @@ class MLController(app_manager.RyuApp):
                                     idle_timeout=idle_timeout,
                                     hard_timeout=hard_timeout)
         datapath.send_msg(mod)
-    
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def _packet_in_handler(self, ev):
-        """Handle packet in events"""
-        msg = ev.msg
-        datapath = msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        in_port = msg.match['in_port']
-        
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-        
-        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # Ignore LLDP packets
-            return
-        
-        dst = eth.dst
-        src = eth.src
-        dpid = datapath.id
-        
-        # Learn MAC address to avoid flooding next time
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src] = in_port
-        
-        # Update topology if needed
-        if src not in self.net:
-            self.net.add_node(src)
-            self.net.add_edge(dpid, src, port=in_port)
-            self.net.add_edge(src, dpid)
-        
-        # Check if we know the destination MAC
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-        
-        actions = [parser.OFPActionOutput(out_port)]
-        
-        # Install a flow to avoid packet_in next time
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            
-            # IP packet with ML-based routing
-            if eth.ethertype == ether_types.ETH_TYPE_IP:
-                ip = pkt.get_protocol(ipv4.ipv4)
-                if ip:
-                    # Use ML-based routing for IP packets
-                    src_ip = ip.src
-                    dst_ip = ip.dst
-                    
-                    # Find the best path using our ML model
-                    if src in self.net and dst in self.net:
-                        try:
-                            path = self._get_ml_path(src, dst)
-                            if path and len(path) > 1:
-                                # Update path in the network
-                                self._install_path_flows(path, src_ip, dst_ip)
-                                # Set the output port to the next hop
-                                next_hop = path[1]
-                                if next_hop in self.mac_to_port[dpid]:
-                                    out_port = self.mac_to_port[dpid][next_hop]
-                                    actions = [parser.OFPActionOutput(out_port)]
-                        except Exception as e:
-                            logger.error(f"Error finding ML path: {e}")
-            
-            # Add flow with a timeout
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, 1, match, actions, msg.buffer_id, idle_timeout=20)
-            else:
-                self.add_flow(datapath, 1, match, actions, idle_timeout=20)
-        
-        # Send packet out
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-        
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
-        datapath.send_msg(out)
     
     def _get_ml_path(self, src, dst):
         """Get the ML-recommended path from src to dst"""
