@@ -17,32 +17,77 @@ def topology():
                          port=6633,
                          ip='127.0.0.1') 
 
-    # Add Host
-    h1 = net.addHost('h1')
-    h2 = net.addHost('h2')
-    h3 = net.addHost('h3')
-    h4 = net.addHost('h4')
+    # Define number of routers and switches
+    num = 5
 
-    s1 = net.addSwitch('s1', cls = OVSKernelSwitch)
-    s2 = net.addSwitch('s2', cls = OVSKernelSwitch)
-    s3 = net.addSwitch('s3', cls = OVSKernelSwitch)
-    s4 = net.addSwitch('s4', cls = OVSKernelSwitch)
+    # Add routers
+    routers = []
+    print('*** Adding routers')
+    for i in range(num):
+        router_name = 'r{0}'.format(i+1)
+        router = net.addHost(router_name, cls=Node, ip='10.0.{0}.1/24'.format(i+1))
+        router.cmd('sysctl -w net.ipv4.ip_forward=1')       
+        routers.append(router)
 
-    net.addLink(h1, s1)
-    net.addLink(h2, s1)
-    net.addLink(s1, s2)
-    net.addLink(s1, s3)
-    net.addLink(s2, s4)
-    net.addLink(s3, s4)
-    net.addLink(s4, h3)
-    net.addLink(s4, h4)
+    # Add switches
+    switches = []
+    print('*** Adding switches')
+    for i in range(num):
+        switch_name = 's{0}'.format(i+1)
+        switch = net.addSwitch(switch_name, cls=OVSKernelSwitch)
+        switches.append(switch)
+
+    # Add hosts 
+    print('** Adding hosts')
+    hosts = []
+    for i in range(num):
+        for j in range(2):
+            host_index = i*2 + j + 1
+            host_name = 'h{0}'.format(host_index)
+            host = net.addHost(host_name, cls=Host, 
+                             ip='10.0.{0}.{1}/24'.format(i+1, 100+j), 
+                             defaultRoute='via 10.0.{0}.1'.format(i+1))
+            hosts.append(host)
+            net.addLink(host, switches[i])
+
+    # Connect switches to their respective routers
+    print('*** Creating links between switches and routers')
+    for i in range(num):
+        net.addLink(switches[i], routers[i], 
+                   intfName2='r{0}-eth0'.format(i+1), 
+                   params2={'ip': '10.0.{0}.1/24'.format(i+1)})
+
+    # Create mesh topology by connecting all routers to each other
+    print('*** Creating mesh links between routers')
+    link_count = 0
+    for i in range(num):
+        for j in range(i+1, num):
+            link_count += 1
+            subnet = 10 + link_count 
+
+            # Add link between routers
+            intfName1 = 'r{0}-eth{1}'.format(i+1, j+1)
+            intfName2 = 'r{0}-eth{1}'.format(j+1, i+1)
+
+            net.addLink(
+                routers[i], 
+                routers[j],
+                intfName1=intfName1, 
+                intfName2=intfName2,
+                params1={'ip': '10.0.{0}.{1}/24'.format(subnet, i+1)},
+                params2={'ip': '10.0.{0}.{1}/24'.format(subnet, j+1)}
+            )
+
+            # Add routes
+            routers[i].cmd('ip route add 10.0.{0}.0/24 via 10.0.{1}.{2}'.format(j+1, subnet, j+1))
+            routers[j].cmd('ip route add 10.0.{0}.0/24 via 10.0.{1}.{2}'.format(i+1, subnet, i+1))
 
     # Start network
     print('*** Starting network')
     net.build()
 
     # Start switches
-    for switch in [s1, s2, s3, s4]:
+    for switch in switches:
         switch.start([c0])
 
     return net
