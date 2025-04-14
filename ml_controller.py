@@ -46,7 +46,7 @@ class MLController(app_manager.RyuApp):
         self.path_update_thread = hub.spawn(self._path_update)
         
         logger.info("ML-based SDN Controller initialized")
-
+    
     def _initialize_ml_model(self):
         model_path = 'ml_routing_model.pkl'
         if os.path.exists(model_path):
@@ -202,65 +202,93 @@ class MLController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
-        
+
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
-        
+
+        # Ignore LLDP packets (used for topology discovery)
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
-        
+
         dst = eth.dst
         src = eth.src
         dpid = datapath.id
-        
+
+        # Learn the source MAC address for the switch
         self.mac_to_port.setdefault(dpid, {})
         self.mac_to_port[dpid][src] = in_port
-        
+
+        # Add the source host to the network graph if not already present
         if src not in self.net:
             self.net.add_node(src)
             self.net.add_edge(dpid, src, port=in_port)
             self.net.add_edge(src, dpid)
-        
+
+        # Default action: if destination MAC is known on this switch then use that port,
+        # otherwise, flood the packet.
+        out_port = ofproto.OFPP_FLOOD
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-        
+
+        use_ml_path = False  # Flag to indicate whether the ML-based path is used
+
+        # If the packet is IPv4, attempt to use an ML-based path decision
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            ip_pkt = pkt.get_protocol(ipv4.ipv4)
+            if ip_pkt:
+                src_ip = ip_pkt.src
+                dst_ip = ip_pkt.dst
+
+                # Proceed only if both source and destination exist in our network graph
+                if src in self.net and dst in self.net:
+                    try:
+                        path = self._get_ml_path(src, dst)
+                        if path and len(path) > 1:
+                            # Install flow entries along the ML-selected path
+                            self._install_path_flows(path, src_ip, dst_ip)
+                            next_hop = path[1]
+                            if next_hop in self.mac_to_port[dpid]:
+                                out_port = self.mac_to_port[dpid][next_hop]
+                                use_ml_path = True
+                    except Exception as e:
+                        logger.error("Error finding ML path: {0}".format(e))
+
+        # Set the action list with the final out_port
         actions = [parser.OFPActionOutput(out_port)]
-        
+
+        # Only install a flow if the packet is not being flooded
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            
-            if eth.ethertype == ether_types.ETH_TYPE_IP:
-                ip = pkt.get_protocol(ipv4.ipv4)
-                if ip:
-                    src_ip = ip.src
-                    dst_ip = ip.dst
-                    
-                    if src in self.net and dst in self.net:
-                        try:
-                            path = self._get_ml_path(src, dst)
-                            if path and len(path) > 1:
-                                self._install_path_flows(path, src_ip, dst_ip)
-                                next_hop = path[1]
-                                if next_hop in self.mac_to_port[dpid]:
-                                    out_port = self.mac_to_port[dpid][next_hop]
-                                    actions = [parser.OFPActionOutput(out_port)]
-                        except Exception as e:
-                            logger.error("Error finding ML path: {0}".format(e))
-            
+            if use_ml_path and eth.ethertype == ether_types.ETH_TYPE_IP:
+                # More specific match for IP traffic when ML path is used
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ipv4_src=src_ip,
+                    ipv4_dst=dst_ip
+                )
+            else:
+                # Fallback: match on Ethernet source and destination
+                match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
+
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
                 self.add_flow(datapath, 1, match, actions, msg.buffer_id, idle_timeout=20)
             else:
                 self.add_flow(datapath, 1, match, actions, idle_timeout=20)
-        
+
+        # Prepare packet-out: if the packet isn't buffered at the switch, include its data
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
-        
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
+
+        out = parser.OFPPacketOut(
+            datapath=datapath,
+            buffer_id=msg.buffer_id,
+            in_port=in_port,
+            actions=actions,
+            data=data
+        )
         datapath.send_msg(out)
+
     
     def _get_ml_path(self, src, dst):
         if src == dst:
