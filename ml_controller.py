@@ -62,6 +62,7 @@ class MLController(app_manager.RyuApp):
         
         logger.info("Python 2 Compatible ML Ensemble-based SDN Controller initialized")
 
+    # initialize ml model
     def _initialize_ml_model(self):
         model_path = 'ensemble_routing_model.pkl'
         scaler_path = 'feature_scaler.pkl'
@@ -81,14 +82,15 @@ class MLController(app_manager.RyuApp):
         
         # Create synthetic training data
         X_synthetic = np.array([
-            [95, 10, 0.1, 2],   # High bandwidth, low delay, low loss, few hops -> Good path
-            [80, 15, 0.3, 3],    # Good bandwidth, moderate delay, moderate loss -> Good path
-            [60, 20, 0.5, 4],    # Moderate bandwidth, moderate delay, moderate loss -> Bad path
-            [40, 25, 0.7, 5],    # Low bandwidth, high delay, high loss, many hops -> Bad path
-            [90, 12, 0.2, 2],    # Good path
-            [75, 18, 0.4, 3],    # Good path
-            [50, 22, 0.6, 4],    # Bad path
-            [30, 28, 0.8, 5]     # Bad path
+            # Bandwidth delay loss hops 
+            [95, 10, 0.1, 2],   
+            [80, 15, 0.3, 3],    
+            [60, 20, 0.5, 4],   
+            [40, 25, 0.7, 5],    
+            [90, 12, 0.2, 2],    
+            [75, 18, 0.4, 3],    
+            [50, 22, 0.6, 4],    
+            [30, 28, 0.8, 5]     
         ])
         
         y_synthetic = np.array([1, 1, 0, 0, 1, 1, 0, 0])
@@ -124,12 +126,14 @@ class MLController(app_manager.RyuApp):
         
         return ensemble_model, scaler
 
+    # Monitor network stats
     def _monitor(self):
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
             hub.sleep(10)
 
+    # Request stats from switch
     def _request_stats(self, datapath):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -140,6 +144,7 @@ class MLController(app_manager.RyuApp):
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
 
+    # triggers when a new switch connects to the network or disconnects to the network to register or unregister a switch
     @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
         datapath = ev.datapath
@@ -152,6 +157,7 @@ class MLController(app_manager.RyuApp):
                 logger.info("Unregistered datapath: %016x", datapath.id)
                 del self.datapaths[datapath.id]
 
+    # triggers when a new switch connects to install default flow rule to send unmatched packet to controller
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -165,6 +171,7 @@ class MLController(app_manager.RyuApp):
         
         logger.info("Switch %016x connected", datapath.id)
 
+    # used to install flow rules on the switch using controller
     def add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0, hard_timeout=0):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -183,6 +190,7 @@ class MLController(app_manager.RyuApp):
                                   hard_timeout=hard_timeout)
         datapath.send_msg(mod)
 
+    # handles packet  which are coming in switch
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
@@ -293,8 +301,8 @@ class MLController(app_manager.RyuApp):
         )
         datapath.send_msg(out)
 
+    # used to classify traffic type
     def _traffic_classification(self, pkt):
-        """Classify traffic type based on packet details"""
         eth = pkt.get_protocols(ethernet.ethernet)[0]
         traffic_type = "default"
         
@@ -328,8 +336,8 @@ class MLController(app_manager.RyuApp):
         
         return traffic_type
 
+    # get best path based on ML model with traffic type consideration
     def _get_ml_path(self, src, dst, traffic_type="default"):
-        """Get best path based on ML ensemble prediction with traffic type consideration"""
         if src == dst:
             return [src]
         
@@ -347,13 +355,13 @@ class MLController(app_manager.RyuApp):
                 # Adjust features based on traffic type
                 if traffic_type == "web":
                     # Web traffic: prioritize low latency
-                    features[1] *= 0.9  # Reduce the importance of delay
+                    features[1] *= 0.9  
                 elif traffic_type == "interactive":
                     # Interactive traffic: prioritize stability
-                    features[2] *= 0.8  # Reduce the importance of packet loss
+                    features[2] *= 0.8  
                 elif traffic_type == "email":
                     # Email traffic: prioritize bandwidth
-                    features[0] *= 1.1  # Increase the importance of bandwidth
+                    features[0] *= 1.1 
                 
                 path_features.append((path, features))
             
@@ -363,24 +371,24 @@ class MLController(app_manager.RyuApp):
             logger.error("Error getting ML path: %s", str(e))
             return None
 
+    # calculate path features for ML model input
     def _calculate_path_features(self, path):
-        """Calculate path features for ML model input"""
         hop_count = len(path) - 1
         
         # Default values
-        bandwidth = 100  # Mbps
-        delay = 10       # ms
-        packet_loss = 0.1  # percentage
+        bandwidth = 100  
+        delay = 10     
+        packet_loss = 0.1  
         
         # Calculate actual metrics based on observed network stats
         for i in xrange(len(path) - 1):
-            if isinstance(path[i], (int, long)) and isinstance(path[i+1], (int, long)):  # Python 2 compatibility
+            if isinstance(path[i], (int, long)) and isinstance(path[i+1], (int, long)):  
                 link = (path[i], path[i+1])
                 if link in self.bandwidths:
                     bandwidth = min(bandwidth, self.bandwidths[link])
                 
                 # Calculate delay based on link properties
-                link_delay = 5  # Default 5ms per hop
+                link_delay = 5 
                 if link in self.flow_stats:
                     if 'delay' in self.flow_stats[link]:
                         link_delay = self.flow_stats[link]['delay']
@@ -388,18 +396,17 @@ class MLController(app_manager.RyuApp):
                 delay += link_delay
                 
                 # Calculate packet loss based on link properties
-                link_loss = 0.05  # Default 0.05% per hop
+                link_loss = 0.05  
                 if link in self.flow_stats:
                     if 'packet_loss' in self.flow_stats[link]:
                         link_loss = self.flow_stats[link]['packet_loss']
                 
                 packet_loss += link_loss
         
-        # Return feature vector [bandwidth, delay, packet_loss, hop_count]
         return [bandwidth, delay, packet_loss, hop_count]
 
+    # Used to predict best path 
     def _predict_best_path(self, path_features):
-        """Use ensemble model to predict the best path"""
         if not path_features:
             return None
         
@@ -420,7 +427,7 @@ class MLController(app_manager.RyuApp):
         if len(good_path_indices) > 1:
             # Calculate selection probabilities based on prediction confidence
             probs = predictions[good_path_indices, 1]
-            probs = probs / np.sum(probs)  # Normalize to sum to 1
+            probs = probs / np.sum(probs)  
             
             # Select path probabilistically
             selected_idx = np.random.choice(good_path_indices, p=probs)
@@ -428,15 +435,15 @@ class MLController(app_manager.RyuApp):
         
         return paths[best_idx]
 
+    # install flow entries along the selected path
     def _install_path_flows(self, path, src_ip, dst_ip, traffic_type="default"):
-        """Install flow entries along the selected path"""
         if len(path) < 2:
             return
         
         # Set appropriate timeout and priority based on traffic type
-        idle_timeout = 30  # Default timeout
-        hard_timeout = 60  # Default hard timeout
-        priority = 2       # Default priority
+        idle_timeout = 30  
+        hard_timeout = 60 
+        priority = 2     
         
         if traffic_type == "web":
             idle_timeout = 20  # Web flows might be shorter
@@ -446,7 +453,7 @@ class MLController(app_manager.RyuApp):
             hard_timeout = 300
             priority = 3
         
-        for i in xrange(len(path) - 1):  # Use xrange for Python 2
+        for i in xrange(len(path) - 1): 
             if not isinstance(path[i], (int, long)):
                 continue
                 
@@ -470,6 +477,7 @@ class MLController(app_manager.RyuApp):
             self.add_flow(datapath, priority, match, actions, 
                           idle_timeout=idle_timeout, hard_timeout=hard_timeout)
 
+    # event which gets trigerred when a new switch enters the network
     @set_ev_cls(event.EventSwitchEnter)
     def switch_enter_handler(self, ev):
         """Handle switch connection event"""
@@ -483,8 +491,8 @@ class MLController(app_manager.RyuApp):
         
         self._discover_links()
 
+    # discover network topology links
     def _discover_links(self):
-        """Discover network topology links"""
         # Remove existing links from switches
         for node in self.net.nodes():
             if node in self.switches:
@@ -509,9 +517,9 @@ class MLController(app_manager.RyuApp):
                 
                 logger.info("Link added: %016x->%016x via port %d", src, dst, src_port)
 
+    # handle flow statistics event
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
-        """Handle flow statistics event"""
         body = ev.msg.body
         dpid = ev.msg.datapath.id
         
@@ -536,8 +544,8 @@ class MLController(app_manager.RyuApp):
                     time_diff = current_stats['timestamp'] - previous_stats['timestamp']
                     if time_diff > 0:
                         byte_diff = current_stats['byte_count'] - previous_stats['byte_count']
-                        throughput_bps = (byte_diff * 8) / time_diff  # bits per second
-                        throughput_mbps = throughput_bps / 1000000    # megabits per second
+                        throughput_bps = (byte_diff * 8) / time_diff 
+                        throughput_mbps = throughput_bps / 1000000  
                         
                         current_stats['throughput'] = throughput_mbps
                         
@@ -548,9 +556,9 @@ class MLController(app_manager.RyuApp):
                 
                 self.flow_stats[key] = current_stats
 
+    # handles port statistics reply event
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
-        """Handle port statistics event"""
         body = ev.msg.body
         dpid = ev.msg.datapath.id
         
@@ -567,10 +575,9 @@ class MLController(app_manager.RyuApp):
                         if time_diff > 0:
                             # Calculate throughput
                             byte_diff = stat.tx_bytes - prev_stat['tx_bytes']
-                            bit_rate = (byte_diff * 8) / time_diff  # bits per second
+                            bit_rate = (byte_diff * 8) / time_diff  
                             
-                            # Assume 1Gbps link capacity
-                            capacity = 1000000000  # 1 Gbps
+                            capacity = 1000000000  
                             utilization = (bit_rate / capacity) * 100
                             
                             # Update available bandwidth (100 - utilization %)
@@ -609,16 +616,16 @@ class MLController(app_manager.RyuApp):
                     }
                     
                     break
-
+    
+    # used to update paths periodically
     def _path_update(self):
-        """Periodically update paths based on network conditions"""
         while True:
             if self.net.number_of_nodes() > 0:
                 self._update_paths()
             hub.sleep(30)
 
+    # updates path preference based on ML model predictions
     def _update_paths(self):
-        """Update path preferences based on ML ensemble predictions"""
         logger.info("Updating path preferences based on ML ensemble predictions")
         for src in self.net.nodes():
             for dst in self.net.nodes():
@@ -651,22 +658,21 @@ class MLController(app_manager.RyuApp):
                     except Exception as e:
                         logger.error("Error updating path from %s to %s: %s", src, dst, str(e))
 
+    # updates the model periodically
     def _periodic_model_update(self):
-        """Periodically update the ML model with new data"""
         while True:
             if len(self.path_history) > 10:
                 self._update_model_with_feedback()
-            hub.sleep(300)  # Update every 5 minutes
+            hub.sleep(300)  
 
+    # updates the model with historical path performance data
     def _update_model_with_feedback(self):
-        """Update the model with historical path performance data"""
         try:
             current_time = time.time()
             X_update = []
             y_update = []
             
             for path_key, path_data in self.path_history.items():
-                # Only use data points that have been observed for at least 2 minutes
                 if current_time - path_data['timestamp'] >= 120:
                     features = path_data['features']
                     
@@ -683,7 +689,7 @@ class MLController(app_manager.RyuApp):
                     y_update.append(is_good_path)
                     
                     # Keep only recent history
-                    if current_time - path_data['timestamp'] > 600:  # 10 minutes old
+                    if current_time - path_data['timestamp'] > 600:  
                         del self.path_history[path_key]
             
             if len(X_update) > 5:  # Only update if we have enough new samples
@@ -700,26 +706,26 @@ class MLController(app_manager.RyuApp):
                         try:
                             estimator.partial_fit(X_scaled, y_update, classes=[0, 1])
                         except:
-                            pass  # Skip if classifier doesn't support partial_fit
+                            pass  
         
         except Exception as e:
             logger.error("Error updating model: %s", str(e))
 
+    # periodically runs anomaly detection
     def _periodic_anomaly_detection(self):
-        """Periodically run anomaly detection"""
         while True:
             self._detect_anomalies()
             hub.sleep(60)  # Run every minute
 
+    # detect network anomalies based on traffic patterns
     def _detect_anomalies(self):
-        """Detect network anomalies based on traffic patterns"""
         try:
             # Calculate flow statistics
             flow_rates = {}
             current_time = time.time()
             
             for key, stats in self.flow_stats.items():
-                if isinstance(key, tuple) and len(key) == 3:  # (dpid, src_ip, dst_ip)
+                if isinstance(key, tuple) and len(key) == 3: 
                     dpid, src_ip, dst_ip = key
                     
                     # Skip old records
@@ -749,7 +755,7 @@ class MLController(app_manager.RyuApp):
                     avg_rate = self.flow_history[history_key]['avg_rate']
                     
                     # Check for anomalies (sudden increase or decrease)
-                    if rate > avg_rate * 3:  # 3x increase
+                    if rate > avg_rate * 3:  
                         logger.warning("Traffic surge detected from %s to %s: %.2f KB/s", 
                                       src_ip, dst_ip, rate/1024)
                         
@@ -780,8 +786,8 @@ class MLController(app_manager.RyuApp):
         except Exception as e:
             logger.error("Error detecting anomalies: %s", str(e))
 
+    # apply mitigation strategies for traffic surges
     def _mitigate_traffic_surge(self, src_ip, dst_ip):
-        """Apply mitigation strategies for traffic surges"""
         try:
             # Implement rate limiting or rerouting
             for dp_id, datapath in self.datapaths.items():
@@ -796,7 +802,6 @@ class MLController(app_manager.RyuApp):
                 )
                 
                 # Apply rate limiting or reroute
-                # Here we simply set a meter for rate limiting
                 if hasattr(parser, 'OFPMeterMod'):
                     # Configure meter
                     meter_id = hash((src_ip, dst_ip)) % 1000 + 1
